@@ -1,3 +1,4 @@
+import { teamQuery } from '../phase3-validation.js';
 import { randomBytes } from 'node:crypto';
 import { Router } from 'express';
 import bcrypt from 'bcrypt';
@@ -35,13 +36,11 @@ resourceRouter.post(
   managers,
   route(async (req, res) => {
     const data = locationBody.parse(req.body);
-    res
-      .status(201)
-      .json({
-        location: await db.location.create({
-          data: { ...data, ...tenant(req.auth.organizationId) },
-        }),
-      });
+    res.status(201).json({
+      location: await db.location.create({
+        data: { ...data, ...tenant(req.auth.organizationId) },
+      }),
+    });
   }),
 );
 resourceRouter.put(
@@ -72,9 +71,28 @@ resourceRouter.get(
   '/users',
   managers,
   route(async (req, res) => {
+    const query = teamQuery.parse(req.query);
     res.json({
       users: await db.user.findMany({
-        where: tenant(req.auth.organizationId),
+        where: {
+          ...tenant(req.auth.organizationId),
+          ...(query.search
+            ? {
+                OR: [
+                  { name: { contains: query.search, mode: 'insensitive' as const } },
+                  { email: { contains: query.search, mode: 'insensitive' as const } },
+                ],
+              }
+            : {}),
+          ...(query.role ? { role: query.role } : {}),
+          ...(query.locationId
+            ? {
+                locations: {
+                  some: { ...tenant(req.auth.organizationId), locationId: query.locationId },
+                },
+              }
+            : {}),
+        },
         select: { ...publicUser, locations: { select: { locationId: true } } },
         orderBy: { name: 'asc' },
       }),

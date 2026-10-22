@@ -21,7 +21,7 @@ declare module 'express-serve-static-core' {
   }
 }
 const claims = z.object({ sub: z.string(), organizationId: z.string() });
-const credentials = z
+export const credentials = z
   .object({
     email: z
       .string()
@@ -73,10 +73,21 @@ export const requireAuth: RequestHandler = (req, res, next) => {
         throw new AppError(401, 'UNAUTHENTICATED', 'Your session expired. Please sign in.');
       }
       const user = await db.user.findFirst({
-        where: { ...tenant(data.organizationId), id: data.sub },
-        select: { id: true, organizationId: true, role: true },
+        where: { ...tenant(data.organizationId), id: data.sub, active: true },
+        select: { id: true, organizationId: true, role: true, mustChangePassword: true },
       });
       if (!user) throw new AppError(401, 'UNAUTHENTICATED', 'Please sign in to continue.');
+      if (
+        user.mustChangePassword &&
+        !['/api/profile', '/api/auth/me', '/api/auth/logout'].includes(
+          req.originalUrl.split('?')[0],
+        )
+      )
+        throw new AppError(
+          403,
+          'PASSWORD_CHANGE_REQUIRED',
+          'Change your temporary password on the Profile page.',
+        );
       req.auth = user;
     })(),
   ).then(() => next(), next);
@@ -119,7 +130,7 @@ authRouter.post(
     const body = credentials.parse(req.body);
     // Email is globally unique; login must resolve the tenant before a session exists.
     const user = await db.user.findUnique({ where: { email: body.email } });
-    if (!user || !(await bcrypt.compare(body.password, user.passwordHash)))
+    if (!user || !user.active || !(await bcrypt.compare(body.password, user.passwordHash)))
       throw new AppError(401, 'INVALID_CREDENTIALS', 'Email or password is incorrect.');
     signIn(res, user);
     const safe = await db.user.findFirstOrThrow({

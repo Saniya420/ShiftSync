@@ -13,4 +13,7 @@ export const publicUser = {
   role: true,
   hourlyRate: true,
   maxWeeklyHours: true,
+  active: true,
+  emailNotifications: true,
+  mustChangePassword: true,
 } as const;

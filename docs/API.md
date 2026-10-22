@@ -172,3 +172,102 @@ Notifications are produced for week publication, swap acceptance/approval/reject
 time-off approval/denial, and no-shows. Reads and read-all always filter by both
 authenticated organizationId and userId. Unknown fields in defined query/body
 schemas are rejected. Missing foreign-tenant resources return 404.
+
+## Phase 3: AI, profile, batches and admin
+
+| Method   | Path                                         | Access / response                             |
+| -------- | -------------------------------------------- | --------------------------------------------- |
+| POST     | /ai/suggest-roster                           | Manager/owner; suggestion only, no writes     |
+| POST     | /ai/apply-suggestion                         | Manager/owner; 201 drafts + warnings          |
+| GET, PUT | /profile                                     | Own safe profile / update                     |
+| POST     | /users/batch                                 | Manager/owner; atomic update                  |
+| POST     | /time-off/batch-decision                     | Manager/owner; per-item results               |
+| POST     | /shifts/batch-delete                         | Manager/owner; atomic DRAFT deletion          |
+| POST     | /shifts/publish-days                         | Manager/owner; atomic selected-day publishing |
+| GET      | /admin/analytics?from&to&locationId          | Manager/owner analytics                       |
+| GET      | /admin/audit-log?page&pageSize&action&entity | Owner only                                    |
+| PUT      | /admin/users/:id                             | Owner only; role/activation                   |
+| POST     | /admin/users/:id/reset-password              | Owner only; one-time display of tempPassword  |
+
+All bodies/queries reject unknown fields. Foreign tenant IDs return 404 without
+partial writes, except time-off batches which return per-item NOT_FOUND errors.
+EMPLOYEE cannot access AI, batch, or admin endpoints. MANAGER cannot access admin
+user changes or audit logs. Owner accounts cannot be changed through admin/team APIs.
+
+AI suggest body: { week, locationId, needs: [{ weekday, start, end, headcount, position }], notes? }.
+Week is a Monday; weekday is Sunday=0 to Saturday=6. Times are HH:mm local to the
+location; end before start means overnight, equal times are rejected. Up to 70 need
+rows, 30 people per row, 500 requested shifts total. notes is at most 2000 characters.
+Response: { source: "gemini" | "heuristic", shifts: [{ userId, startsAt, endsAt, position }],
+warnings: [{ type, message, shiftId? }], explanation }. Gemini uses a 20-second timeout
+and JSON response mode; unknown users and invalid times are dropped, conflicts become
+warnings, and invalid/unavailable responses use the deterministic fallback. No key
+also uses fallback. 20 suggest requests per org/hour per server process; excess
+returns 429 RATE_LIMITED. Each suggested assignment is checked against all existing
+and proposed shifts. Warnings can also include UNDERSTAFFED, DROPPED, FALLBACK and
+INVALID_TIME. Only active location members are candidates.
+
+AI apply body: { week, locationId, shifts: [{ userId, startsAt, endsAt, position }], force? }.
+1-500 shifts, valid ISO instants with offsets, duration at most 24h, all starting in
+that local week. All assignees must be active tenant members of the location.
+The roster tenant lock and transaction validate the entire batch; overlap returns
+409 SHIFT_OVERLAP with warnings unless force is JSON true. Other roster warnings
+are returned without blocking, consistent with ordinary shift creation. Returns
+{ shifts, warnings }; all saved status values are DRAFT. Failure rolls back the batch.
+
+Profile PUT body: { name?, emailNotifications?, currentPassword?, password?, pin? }.
+Password keeps the auth 12-character/72-byte rules. PIN is 4-12 digits or null to clear;
+changing either password or PIN requires currentPassword, otherwise 400 validation
+or 403 INVALID_PASSWORD. GET returns { user } with safe fields (no hashes).
+User/session responses now include active, emailNotifications and mustChangePassword.
+Deactivated users get 401 on login and existing sessions. A reset returns { user,
+tempPassword }; the password is stored only as a bcrypt hash, shown once, and requires
+rotation before non-profile resources (403 PASSWORD_CHANGE_REQUIRED). After changing
+it, the temporary password no longer authenticates. Profiles cannot set roles/org IDs.
+
+Team listing accepts optional search (case-insensitive name/email), role and locationId.
+Batch team body: { ids, locationId?, maxWeeklyHours? }; 1-100 unique IDs and at least
+one update. Location is added to memberships; existing locations are preserved.
+Max hours is 0-168. Manager may update employees; owner may also update managers.
+Returns { updated }. All target IDs and the location are validated before writes.
+
+GET /time-off and /swaps accept status and paired from/to (inclusive local dates).
+Requests must overlap the date range (swaps use shift windows). ACCEPTED is a valid
+swap filter and yields no time-off rows. Batch decision body: { ids, status:
+"APPROVED" | "REJECTED" }, up to 100 unique IDs. Each item runs its own transaction
+and transition validation; response { results: [{ id, ok, error?: { code, message } }] }.
+A stale/missing item does not undo valid items. Successful decisions enqueue email.
+
+Draft delete body: { ids }; 1-100 unique IDs. Missing IDs return 404, any published
+shift returns 409 NOT_DRAFT, and no deletion occurs. Returns { deleted }.
+Publish days body: { week, locationId, days: [0..6], force? }; days must be unique,
+1-7 values. Returns { published, warnings }; existing overlap/override rules apply.
+Publication emails/notifications are idempotent when repeated without new drafts.
+
+Admin analytics uses the existing inclusive report range validation (at most 366 days
+apart) and timezone rules. Returns { timezone, kpis, daily, attendance, hoursPerEmployee }.
+KPIs: scheduledHours, actualHours, labourCost (scheduled hours times current hourly
+rate), attendanceRate, lateRate, noShowRate, swapVolume, swapApprovalRate,
+timeOffVolume, coverage. Rates are percentages 0-100; empty denominators return 0.
+Attendance denominators are ended assigned shifts. Arrival timestamps count late
+independently of stored EARLY_LEAVE status. Missing arrival on an ended shift is a
+no-show. Actual hours require clock-in and clock-out; hours/cost are clipped to the
+range and split by local day. Coverage is assigned/published shifts intersecting the
+range. Swap approval is approved/(approved+rejected); request volume filters creation
+date. Location filters restrict swap shift locations and time-off user memberships.
+Inactive users retain their historical metrics. daily has one row per local date:
+{ date, scheduledHours, actualHours, labourCost }; hoursPerEmployee contains
+{ userId, name, scheduledHours, actualHours }. attendance contains name/value buckets.
+
+Audit response: { entries, total, page, pageSize }; default page=1, pageSize=25 (max 100),
+action and entity are exact filters, entries newest first with stable ID ordering.
+Owner user PUT body: { role?: "MANAGER" | "EMPLOYEE", active?: boolean }; at least one
+field. Reset body is {}. Changes and password reset actions produce tenant audit rows;
+passwords and hashes never appear in audit details.
+
+Emails are queued atomically with notifications when opted in (default true), escaped
+HTML and plain text. Transports: RESEND_API_KEY -> Resend, SMTP_URL -> Nodemailer,
+otherwise pino log. EMAIL_FROM defaults to ShiftSync <notifications@shiftsync.local>.
+Background batches run every 30 seconds, retry exponentially up to 5 attempts then
+FAILED. Queued emails are suppressed if a recipient opts out or becomes inactive.
+No background jobs or real integration network calls run in tests.

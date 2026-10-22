@@ -1,3 +1,4 @@
+import { requestQuery } from '../phase3-validation.js';
 import { Router } from 'express';
 import { requireRole } from '../auth.js';
 import { db, tenant } from '../db.js';
@@ -38,8 +39,7 @@ const managers = requireRole('OWNER', 'MANAGER');
 phase2Router.get(
   '/time-off',
   route(async (req, res) => {
-    emptyQuery.parse(req.query);
-    res.json({ requests: await listTimeOff(req.auth) });
+    res.json({ requests: await listTimeOff(req.auth, requestQuery.parse(req.query)) });
   }),
 );
 phase2Router.post(
@@ -80,8 +80,7 @@ phase2Router.get(
 phase2Router.get(
   '/swaps',
   route(async (req, res) => {
-    emptyQuery.parse(req.query);
-    res.json({ swaps: await listSwaps(req.auth) });
+    res.json({ swaps: await listSwaps(req.auth, requestQuery.parse(req.query)) });
   }),
 );
 phase2Router.post(

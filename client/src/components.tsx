@@ -59,9 +59,16 @@ export function Empty({ title, description }: { title: string; description: stri
 }
 export function QueryState({ loading, error }: { loading: boolean; error: boolean }) {
   return loading ? (
-    <p className="card text-slate-500" role="status">
-      Loading your workspace…
-    </p>
+    <div className="card space-y-4" role="status" aria-label="Loading your workspace">
+      <span className="sr-only">Loading your workspace…</span>
+      {[1, 2, 3].map((i) => (
+        <div
+          key={i}
+          className="h-5 animate-pulse rounded bg-slate-100 motion-reduce:animate-none"
+          style={{ width: 100 - i * 12 + '%' }}
+        />
+      ))}
+    </div>
   ) : error ? (
     <p className="card text-red-700" role="alert">
       We couldn’t load this information. Refresh to try again.

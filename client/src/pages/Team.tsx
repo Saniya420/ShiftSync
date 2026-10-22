@@ -1,3 +1,4 @@
+import { TeamBatch } from './TeamBatch';
 import { useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Users, MapPin, Pencil, Trash2, Copy } from 'lucide-react';
@@ -18,6 +19,15 @@ export function Team() {
     queryKey: ['locations'],
     queryFn: async () => (await api.get<{ locations: Location[] }>('/locations')).data.locations,
   });
+  const [search, setSearch] = useState(''),
+    [roleFilter, setRoleFilter] = useState(''),
+    [locationFilter, setLocationFilter] = useState('');
+  const shown = (team.data ?? []).filter(
+    (p) =>
+      (!search || (p.name + ' ' + p.email).toLowerCase().includes(search.toLowerCase())) &&
+      (!roleFilter || p.role === roleFilter) &&
+      (!locationFilter || p.locations?.some((l) => l.locationId === locationFilter)),
+  );
   const [member, setMember] = useState<User | 'new' | null>(null);
   const [editingLocation, setEditingLocation] = useState<Location | 'new' | null>(null);
   const [credentials, setCredentials] = useState<{ email: string; password: string } | null>(null);
@@ -27,6 +37,7 @@ export function Team() {
     await cache.invalidateQueries({ queryKey: ['shifts'] });
   };
   const deleteLocation = async (id: string) => {
+    if (!window.confirm('Delete this location?')) return;
     try {
       await api.delete('/locations/' + id);
       await refresh();
@@ -85,6 +96,46 @@ export function Team() {
       />
       {team.data && locations.data && (
         <>
+          <div className="mb-5 grid gap-3 sm:grid-cols-3">
+            <label>
+              Search team
+              <input
+                type="search"
+                placeholder="Name or email"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </label>
+            <label>
+              Role
+              <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+                <option value="">All roles</option>
+                {['OWNER', 'MANAGER', 'EMPLOYEE'].map((r) => (
+                  <option key={r}>{r}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Location
+              <select value={locationFilter} onChange={(e) => setLocationFilter(e.target.value)}>
+                <option value="">All locations</option>
+                {locations.data.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <TeamBatch
+              people={shown.filter(
+                (p) => p.role !== 'OWNER' && (user?.role === 'OWNER' || p.role === 'EMPLOYEE'),
+              )}
+              locations={locations.data}
+            />
+          </div>
+          {!shown.length && (
+            <Empty title="No matching team members" description="Try another search or filter." />
+          )}
           <section className="card mb-8 overflow-x-auto p-0">
             <div className="flex items-center gap-2 border-b border-slate-100 p-5">
               <Users size={18} className="text-emerald-700" />
@@ -102,12 +153,17 @@ export function Team() {
                 </tr>
               </thead>
               <tbody>
-                {team.data.map((person) => (
+                {shown.map((person) => (
                   <tr className="border-t border-slate-100" key={person.id}>
                     <td className="flex items-center gap-3 px-5 py-4">
                       <span className="avatar">{initials(person.name)}</span>
                       <div>
-                        <p className="font-semibold text-ink">{person.name}</p>
+                        <p className="font-semibold text-ink">
+                          {person.name}
+                          {person.active === false && (
+                            <span className="ml-2 text-xs text-amber-700">Inactive</span>
+                          )}
+                        </p>
                         <p className="mt-1 text-xs text-slate-400">{person.email}</p>
                       </div>
                     </td>

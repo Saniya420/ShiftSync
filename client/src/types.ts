@@ -7,6 +7,9 @@ export interface User {
   role: Role;
   hourlyRate: string;
   maxWeeklyHours: number;
+  active?: boolean;
+  emailNotifications?: boolean;
+  mustChangePassword?: boolean;
   organization?: { name: string; timezone: string };
   locations?: { locationId: string }[];
 }

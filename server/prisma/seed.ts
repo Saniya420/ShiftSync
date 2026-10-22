@@ -1,3 +1,4 @@
+import { emailTemplate } from '../src/domain/email.js';
 import 'dotenv/config';
 import bcrypt from 'bcrypt';
 import { PrismaClient, type Role } from '@prisma/client';
@@ -115,6 +116,104 @@ async function main() {
       }
     }
   }
+  // Stable IDs make the history additive and safe to seed repeatedly.
+  for (let weeksAgo = 1; weeksAgo <= 3; weeksAgo++) {
+    const historyWeek = monday.minus({ weeks: weeksAgo });
+    for (const [employeeIndex, account] of accounts
+      .filter((a) => a.role === 'EMPLOYEE')
+      .entries()) {
+      for (let day = 0; day < 5; day++) {
+        const startsAt = historyWeek
+          .plus({ days: day })
+          .set({ hour: 8 + (employeeIndex % 3), minute: 0 });
+        const shiftId = 'history-' + account.id + '-' + historyWeek.toISODate() + '-' + day;
+        const mixed = (employeeIndex + day + weeksAgo) % 10;
+        const status =
+          mixed === 0 ? 'NO_SHOW' : mixed <= 2 ? 'LATE' : mixed === 3 ? 'EARLY_LEAVE' : 'ON_TIME';
+        await db.shift.upsert({
+          where: { organizationId_id: { organizationId, id: shiftId } },
+          update: {},
+          create: {
+            id: shiftId,
+            organizationId,
+            locationId,
+            userId: account.id,
+            startsAt: startsAt.toJSDate(),
+            endsAt: startsAt.plus({ hours: 7 }).toJSDate(),
+            position: day % 2 ? 'Customer service' : 'Floor team',
+            status: 'PUBLISHED',
+          },
+        });
+        await db.attendanceRecord.upsert({
+          where: { organizationId_shiftId_userId: { organizationId, shiftId, userId: account.id } },
+          update: {},
+          create: {
+            organizationId,
+            shiftId,
+            userId: account.id,
+            status,
+            clockInAt:
+              status === 'NO_SHOW'
+                ? null
+                : startsAt.plus({ minutes: status === 'LATE' ? 12 : 0 }).toJSDate(),
+            clockOutAt:
+              status === 'NO_SHOW'
+                ? null
+                : startsAt
+                    .plus({ hours: 7, minutes: status === 'EARLY_LEAVE' ? -30 : 0 })
+                    .toJSDate(),
+          },
+        });
+      }
+    }
+    const openId = 'history-open-' + historyWeek.toISODate();
+    await db.shift.upsert({
+      where: { organizationId_id: { organizationId, id: openId } },
+      update: {},
+      create: {
+        id: openId,
+        organizationId,
+        locationId,
+        startsAt: historyWeek.plus({ days: 5, hours: 9 }).toJSDate(),
+        endsAt: historyWeek.plus({ days: 5, hours: 15 }).toJSDate(),
+        status: 'PUBLISHED',
+        position: 'Weekend cover',
+      },
+    });
+    for (let index = 0; index < 2; index++) {
+      const swapId = 'history-swap-' + historyWeek.toISODate() + '-' + index;
+      if (!(await db.swapRequest.findFirst({ where: { organizationId, id: swapId } })))
+        await db.swapRequest.create({
+          data: {
+            id: swapId,
+            organizationId,
+            shiftId: 'history-demo-employee-1-' + historyWeek.toISODate() + '-' + index,
+            requesterId: 'demo-employee-1',
+            status: index === 0 ? 'APPROVED' : 'REJECTED',
+            createdAt: historyWeek.plus({ days: index }).toJSDate(),
+          },
+        });
+    }
+    const timeOffId = 'history-time-off-' + historyWeek.toISODate();
+    await db.timeOffRequest.upsert({
+      where: { organizationId_id: { organizationId, id: timeOffId } },
+      update: {},
+      create: {
+        id: timeOffId,
+        organizationId,
+        userId: 'demo-employee-2',
+        startsAt: historyWeek.plus({ days: 5 }).toJSDate(),
+        endsAt: historyWeek.plus({ days: 7 }).toJSDate(),
+        reason: 'Weekend away',
+        status: 'APPROVED',
+        createdAt: historyWeek.toJSDate(),
+      },
+    });
+  }
+  await db.user.updateMany({
+    where: { organizationId, id: 'demo-employee-6' },
+    data: { active: false },
+  });
   const requestId = 'demo-time-off-' + monday.toISODate();
   await db.timeOffRequest.upsert({
     where: { organizationId_id: { organizationId, id: requestId } },
@@ -164,16 +263,26 @@ async function main() {
   }
   for (const account of accounts) {
     const notificationId = 'demo-notification-' + account.id + '-' + monday.toISODate();
-    if (!(await db.notification.findFirst({ where: { organizationId, id: notificationId } })))
-      await db.notification.create({
-        data: {
-          id: notificationId,
-          organizationId,
-          userId: account.id,
-          title: 'Welcome to your week',
-          message: 'Your schedule is ready. Check your shifts and team requests.',
-        },
+    if (!(await db.notification.findFirst({ where: { organizationId, id: notificationId } }))) {
+      await db.$transaction(async (tx) => {
+        const title = 'Welcome to your week';
+        const message = 'Your schedule is ready. Check your shifts and team requests.';
+        await tx.notification.create({
+          data: { id: notificationId, organizationId, userId: account.id, title, message },
+        });
+        const user = await tx.user.findFirstOrThrow({ where: { organizationId, id: account.id } });
+        if (user.emailNotifications && user.active)
+          await tx.emailOutbox.create({
+            data: {
+              organizationId,
+              userId: user.id,
+              to: user.email,
+              subject: title,
+              ...emailTemplate(user.name, title, message),
+            },
+          });
       });
+    }
   }
   console.info('Corner Mart demo is ready. See prisma/SEED_ACCOUNTS.md for logins.');
 }

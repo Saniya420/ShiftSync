@@ -1,26 +1,23 @@
-import type { Prisma } from '@prisma/client';
+import { DateTime } from 'luxon';
+import type { z } from 'zod';
+import type { requestQuery } from '../phase3-validation.js';
 import type { Session } from '../auth.js';
 import { db, tenant } from '../db.js';
 import { AppError } from '../http.js';
 import { transitionSwap, type SwapAction } from '../domain/swaps.js';
 import { contextFor, transaction, warningsFor } from './roster.js';
+import { notify } from './notifications.js';
 const person = { select: { id: true, name: true } } as const;
-export async function notify(
-  tx: Prisma.TransactionClient,
-  organizationId: string,
-  userIds: string[],
-  title: string,
-  message: string,
-) {
-  await tx.notification.createMany({
-    data: [...new Set(userIds)].map((userId) => ({ organizationId, userId, title, message })),
-  });
-}
-export async function listTimeOff(auth: Session) {
+export { notify } from './notifications.js';
+export async function listTimeOff(auth: Session, query: z.infer<typeof requestQuery> = {}) {
+  const filter = await requestFilter(auth, query);
   return db.timeOffRequest.findMany({
     where: {
       ...tenant(auth.organizationId),
       ...(auth.role === 'EMPLOYEE' ? { userId: auth.id } : {}),
+      ...(query.status && query.status !== 'ACCEPTED' ? { status: query.status } : {}),
+      ...(query.status === 'ACCEPTED' ? { id: { in: [] } } : {}),
+      ...filter,
     },
     include: { user: person },
     orderBy: { createdAt: 'desc' },
@@ -82,18 +79,22 @@ export async function coworkers(auth: Session, shiftId: string) {
     where: {
       ...tenant(auth.organizationId),
       id: { not: auth.id },
+      active: true,
       locations: { some: { ...tenant(auth.organizationId), locationId: shift.locationId } },
     },
     select: { id: true, name: true },
   });
 }
-export async function listSwaps(auth: Session) {
+export async function listSwaps(auth: Session, query: z.infer<typeof requestQuery> = {}) {
+  const filter = await requestFilter(auth, query);
   const memberships = await db.userLocation.findMany({
     where: { ...tenant(auth.organizationId), userId: auth.id },
   });
   return db.swapRequest.findMany({
     where: {
       ...tenant(auth.organizationId),
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.from ? { shift: { ...tenant(auth.organizationId), ...filter } } : {}),
       ...(auth.role === 'EMPLOYEE'
         ? {
             OR: [
@@ -148,6 +149,7 @@ export async function createSwap(auth: Session, body: { shiftId: string; targetU
           where: {
             ...tenant(auth.organizationId),
             userId: body.targetUserId,
+            user: { organizationId: auth.organizationId, active: true },
             locationId: shift.locationId,
           },
         })))
@@ -213,7 +215,12 @@ export async function actOnSwap(auth: Session, id: string, action: SwapAction, f
       if (
         !swap.acceptedById ||
         !(await tx.userLocation.findFirst({
-          where: { ...scope, userId: swap.acceptedById, locationId: swap.shift.locationId },
+          where: {
+            ...scope,
+            userId: swap.acceptedById,
+            user: { organizationId: auth.organizationId, active: true },
+            locationId: swap.shift.locationId,
+          },
         }))
       )
         throw new AppError(
@@ -278,4 +285,31 @@ export async function actOnSwap(auth: Session, id: string, action: SwapAction, f
     }
     return { swap: await tx.swapRequest.findFirstOrThrow({ where: { ...scope, id } }), warnings };
   });
+}
+
+async function requestFilter(auth: Session, query: z.infer<typeof requestQuery>) {
+  if (!query.from || !query.to) return {};
+  const org = await db.organization.findFirstOrThrow({ where: { id: auth.organizationId } });
+  return {
+    startsAt: {
+      lt: DateTime.fromISO(query.to, { zone: org.timezone })
+        .plus({ days: 1 })
+        .startOf('day')
+        .toJSDate(),
+    },
+    endsAt: { gt: DateTime.fromISO(query.from, { zone: org.timezone }).startOf('day').toJSDate() },
+  };
+}
+export async function batchTimeOff(auth: Session, ids: string[], status: 'APPROVED' | 'REJECTED') {
+  const results = [];
+  for (const id of ids) {
+    try {
+      await changeTimeOff(auth, id, status);
+      results.push({ id, ok: true });
+    } catch (error) {
+      if (!(error instanceof AppError)) throw error;
+      results.push({ id, ok: false, error: { code: error.code, message: error.message } });
+    }
+  }
+  return { results };
 }

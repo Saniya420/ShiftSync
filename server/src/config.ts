@@ -2,6 +2,19 @@ import 'dotenv/config';
 import { z } from 'zod';
 const env = z
   .object({
+    GEMINI_API_KEY: z.string().optional(),
+    GEMINI_MODEL: z
+      .string()
+      .regex(/^[a-zA-Z0-9.-]+$/)
+      .default('gemini-3.5-flash'),
+    // Tried when the main model is overloaded (503) or rate limited (429).
+    GEMINI_FALLBACK_MODEL: z
+      .string()
+      .regex(/^[a-zA-Z0-9.-]+$/)
+      .default('gemini-flash-lite-latest'),
+    RESEND_API_KEY: z.string().optional(),
+    SMTP_URL: z.string().optional(),
+    EMAIL_FROM: z.string().default('ShiftSync <notifications@shiftsync.local>'),
     DATABASE_URL: z.string().url(),
     JWT_SECRET: z.string().min(32),
     // Comma-separated list of allowed browser origins.

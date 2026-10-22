@@ -1,3 +1,5 @@
+import { AiRoster } from './AiRoster';
+import { RosterBatch } from './RosterBatch';
 import { useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { DateTime } from 'luxon';
@@ -28,6 +30,8 @@ const colors = [
 export function Roster() {
   const { user } = useAuth();
   const cache = useQueryClient();
+  const [aiOpen, setAiOpen] = useState(false);
+  const [positionFilter, setPositionFilter] = useState('');
   const [week, setWeek] = useState(currentWeek(user?.organization?.timezone));
   const [selectedLocation, setSelectedLocation] = useState('');
   const [selection, setSelection] = useState<Selection | null>(null);
@@ -51,9 +55,10 @@ export function Roster() {
     queryFn: async () =>
       (await api.get<{ shifts: Shift[] }>('/shifts', { params: { week, locationId } })).data.shifts,
   });
-  const shifts = roster.data ?? [];
-  const people = (team.data ?? []).filter((p) =>
-    p.locations?.some((l) => l.locationId === locationId),
+  const allShifts = roster.data ?? [];
+  const shifts = allShifts.filter((s) => !positionFilter || s.position === positionFilter);
+  const people = (team.data ?? []).filter(
+    (p) => p.active !== false && p.locations?.some((l) => l.locationId === locationId),
   );
   // Keep historical assignments visible after a member is removed from the location.
   const rows = [
@@ -200,6 +205,37 @@ export function Roster() {
           )}
         </div>
       )}
+      <div className="mb-5 flex flex-wrap items-end gap-3">
+        <label>
+          Position
+          <select value={positionFilter} onChange={(e) => setPositionFilter(e.target.value)}>
+            <option value="">All positions</option>
+            {[...new Set(allShifts.map((s) => s.position))].map((p) => (
+              <option key={p}>{p}</option>
+            ))}
+          </select>
+        </label>
+        <button className="btn-secondary" disabled={!locationId} onClick={() => setAiOpen(true)}>
+          Suggest with AI
+        </button>
+        <RosterBatch
+          key={week + locationId}
+          week={week}
+          locationId={locationId}
+          shifts={shifts}
+          people={team.data ?? []}
+        />
+      </div>
+      {aiOpen && (
+        <AiRoster
+          key={week + locationId}
+          week={week}
+          locationId={locationId}
+          zone={zone}
+          people={team.data ?? []}
+          onClose={() => setAiOpen(false)}
+        />
+      )}
       <QueryState
         loading={locations.isPending || team.isPending || (!!locationId && roster.isPending)}
         error={locations.isError || team.isError || roster.isError}
@@ -217,7 +253,7 @@ export function Roster() {
       )}
       {location && team.data && !roster.isPending && !roster.isError && (
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <table className="w-full min-w-[1120px] table-fixed border-collapse text-left">
+          <table className="w-full roster-grid min-w-[1120px] table-fixed border-collapse text-left">
             <thead>
               <tr className="bg-[#f9faf8]">
                 <th className="w-52 border-b border-r border-slate-200 p-5 text-xs font-semibold text-slate-400">
@@ -468,6 +504,7 @@ function ShiftModal({
   };
   const remove = async () => {
     if (!shift) return;
+    if (!window.confirm('Delete this shift?')) return;
     setBusy(true);
     try {
       await api.delete('/shifts/' + shift.id);
@@ -489,11 +526,13 @@ function ShiftModal({
           Team member
           <select name="userId" defaultValue={selection.userId ?? ''}>
             <option value="">Open shift · assign later</option>
-            {people.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
+            {people
+              .filter((p) => p.active !== false || p.id === selection.userId)
+              .map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
           </select>
         </label>
         <div className="grid gap-4 sm:grid-cols-2">

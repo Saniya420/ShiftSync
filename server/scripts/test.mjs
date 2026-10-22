@@ -10,6 +10,9 @@ const env = {
   ...process.env,
   DATABASE_URL: url,
   NODE_ENV: 'test',
+  GEMINI_API_KEY: '',
+  RESEND_API_KEY: '',
+  SMTP_URL: '',
   JWT_SECRET: 'test-only-secret-with-at-least-32-characters',
 };
 const run = (path, args) => {

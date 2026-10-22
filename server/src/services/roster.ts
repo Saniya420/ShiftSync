@@ -7,9 +7,10 @@ import { AppError } from '../http.js';
 import { detectConflicts, type Conflict } from '../domain/conflicts.js';
 import { shiftBody, weekRange } from '../validation.js';
 
+import { notify } from './notifications.js';
 type Tx = Prisma.TransactionClient;
 type ShiftBody = z.infer<typeof shiftBody>;
-async function getLocation(tx: Tx, organizationId: string, id: string) {
+export async function getLocation(tx: Tx, organizationId: string, id: string) {
   const location = await tx.location.findFirst({ where: { ...tenant(organizationId), id } });
   if (!location) throw new AppError(404, 'NOT_FOUND', 'Location not found.');
   return location;
@@ -54,7 +55,7 @@ export function warningsFor(
       })
     : [];
 }
-function checkOverlap(warnings: Conflict[], force: boolean) {
+export function checkOverlap(warnings: Conflict[], force: boolean) {
   if (!force && warnings.some((w) => w.type === 'OVERLAP'))
     throw new AppError(
       409,
@@ -119,7 +120,12 @@ export async function saveShift(auth: Session, body: ShiftBody, id?: string) {
     const location = await getLocation(tx, auth.organizationId, body.locationId);
     if (body.userId) {
       const membership = await tx.userLocation.findFirst({
-        where: { ...tenant(auth.organizationId), userId: body.userId, locationId: body.locationId },
+        where: {
+          ...tenant(auth.organizationId),
+          userId: body.userId,
+          user: { organizationId: auth.organizationId, active: true },
+          locationId: body.locationId,
+        },
       });
       if (!membership)
         throw new AppError(404, 'NOT_FOUND', 'Employee is not assigned to this location.');
@@ -150,6 +156,98 @@ export async function saveShift(auth: Session, body: ShiftBody, id?: string) {
 export async function deleteShift(auth: Session, id: string) {
   await transaction(auth.organizationId, async (tx) => {
     await tx.shift.delete({ where: { organizationId_id: { ...tenant(auth.organizationId), id } } });
+  });
+}
+export async function applyShifts(
+  auth: Session,
+  week: string,
+  locationId: string,
+  proposed: { userId: string; startsAt: string; endsAt: string; position: string }[],
+  force: boolean,
+) {
+  return transaction(auth.organizationId, async (tx) => {
+    const scope = tenant(auth.organizationId);
+    const location = await getLocation(tx, auth.organizationId, locationId);
+    const range = weekRange(week, location.timezone);
+    const context = await contextFor(tx, auth.organizationId, range.start, range.end);
+    const members = await tx.userLocation.findMany({
+      where: { ...scope, locationId, user: { ...scope, active: true } },
+    });
+    const copies = proposed.map((s, i) => ({
+      ...s,
+      startsAt: new Date(s.startsAt),
+      endsAt: new Date(s.endsAt),
+      id: 'apply-' + i,
+    }));
+    for (const s of copies) {
+      if (!members.some((m) => m.userId === s.userId))
+        throw new AppError(404, 'NOT_FOUND', 'Active location member not found.');
+      if (s.startsAt < range.start || s.startsAt >= range.end)
+        throw new AppError(400, 'VALIDATION_ERROR', 'All shifts must start in the selected week.');
+    }
+    const batch = {
+      ...context,
+      shifts: [
+        ...context.shifts,
+        ...copies.map((s) => ({
+          ...s,
+          organizationId: auth.organizationId,
+          locationId,
+          status: 'DRAFT' as const,
+          notes: null,
+          createdAt: new Date(),
+        })),
+      ],
+    };
+    const warnings = copies.flatMap((s) => warningsFor(s, batch, location.timezone));
+    checkOverlap(warnings, force);
+    const shifts: Shift[] = [];
+    for (const s of copies)
+      shifts.push(
+        await tx.shift.create({
+          data: {
+            ...scope,
+            userId: s.userId,
+            startsAt: s.startsAt,
+            endsAt: s.endsAt,
+            position: s.position,
+            locationId,
+            status: 'DRAFT',
+          },
+        }),
+      );
+    await tx.auditLog.create({
+      data: {
+        ...scope,
+        actorId: auth.id,
+        action: 'AI_SUGGESTION_APPLIED',
+        entityType: 'Shift',
+        entityId: locationId,
+        details: { count: shifts.length, force },
+      },
+    });
+    return { shifts, warnings };
+  });
+}
+export async function deleteDrafts(auth: Session, ids: string[]) {
+  return transaction(auth.organizationId, async (tx) => {
+    const where = { ...tenant(auth.organizationId), id: { in: ids } };
+    const shifts = await tx.shift.findMany({ where });
+    if (shifts.length !== ids.length) throw new AppError(404, 'NOT_FOUND', 'Shift not found.');
+    if (shifts.some((s) => s.status !== 'DRAFT'))
+      throw new AppError(409, 'NOT_DRAFT', 'Only draft shifts can be batch deleted.');
+    const result = await tx.shift.deleteMany({ where: { ...where, status: 'DRAFT' } });
+    await tx.auditLog.create({
+      data: {
+        ...tenant(auth.organizationId),
+        actorId: auth.id,
+        action: 'SHIFTS_DELETED',
+        entityType: 'Shift',
+        entityId: ids[0],
+        details: { ids },
+      },
+    });
+    return { deleted: result.count };
   });
 }
 export async function copyWeek(auth: Session, week: string, locationId: string, force: boolean) {
@@ -189,7 +287,12 @@ export async function copyWeek(auth: Session, week: string, locationId: string, 
       if (
         s.userId &&
         !(await tx.userLocation.findFirst({
-          where: { ...tenant(auth.organizationId), userId: s.userId, locationId },
+          where: {
+            ...tenant(auth.organizationId),
+            userId: s.userId,
+            user: { organizationId: auth.organizationId, active: true },
+            locationId,
+          },
         }))
       )
         throw new AppError(
@@ -215,11 +318,28 @@ export async function copyWeek(auth: Session, week: string, locationId: string, 
     return { shifts, warnings };
   });
 }
-export async function publishWeek(auth: Session, week: string, locationId: string, force: boolean) {
+export async function publishWeek(
+  auth: Session,
+  week: string,
+  locationId: string,
+  force: boolean,
+  days?: number[],
+) {
   return transaction(auth.organizationId, async (tx) => {
     const location = await getLocation(tx, auth.organizationId, locationId);
     const { start, end } = weekRange(week, location.timezone);
-    const where = { ...tenant(auth.organizationId), locationId, startsAt: { gte: start, lt: end } };
+    const selectedDays = days?.map((day) => {
+      const date = DateTime.fromISO(week, { zone: location.timezone }).plus({
+        days: (day + 6) % 7,
+      });
+      return { startsAt: { gte: date.toJSDate(), lt: date.plus({ days: 1 }).toJSDate() } };
+    });
+    const where = {
+      ...tenant(auth.organizationId),
+      locationId,
+      startsAt: { gte: start, lt: end },
+      ...(selectedDays ? { OR: selectedDays } : {}),
+    };
     const shifts = await tx.shift.findMany({ where });
     const context = await contextFor(tx, auth.organizationId, start, end);
     const warnings = shifts.flatMap((s) => warningsFor(s, context, location.timezone));
@@ -231,14 +351,13 @@ export async function publishWeek(auth: Session, week: string, locationId: strin
     const recipients = [
       ...new Set(shifts.filter((s) => s.status === 'DRAFT' && s.userId).map((s) => s.userId!)),
     ];
-    await tx.notification.createMany({
-      data: recipients.map((userId) => ({
-        ...tenant(auth.organizationId),
-        userId,
-        title: 'Your schedule is published',
-        message: 'Your schedule for the week of ' + week + ' at ' + location.name + ' is ready.',
-      })),
-    });
+    await notify(
+      tx,
+      auth.organizationId,
+      recipients,
+      'Your schedule is published',
+      'Your schedule for the week of ' + week + ' at ' + location.name + ' is ready.',
+    );
     return { published: result.count, warnings };
   });
 }

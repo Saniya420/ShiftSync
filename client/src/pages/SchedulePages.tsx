@@ -126,7 +126,7 @@ export function Dashboard() {
                     className="flex items-center gap-4 border-t border-slate-100 py-4"
                     key={s.id}
                   >
-                    <div className="w-12 rounded-xl bg-slate-50 py-2 text-center">
+                    <div className="w-12 shrink-0 rounded-xl bg-slate-50 py-2 text-center">
                       <p className="text-[10px] uppercase text-slate-400">
                         {DateTime.fromISO(s.startsAt)
                           .setZone(s.location?.timezone ?? zone)
@@ -136,7 +136,7 @@ export function Dashboard() {
                         {DateTime.fromISO(s.startsAt).setZone(s.location?.timezone ?? zone).day}
                       </p>
                     </div>
-                    <div className="flex-1">
+                    <div className="min-w-0 flex-1">
                       <p className="text-sm font-semibold text-ink">
                         {manager
                           ? (team.data?.find((u) => u.id === s.userId)?.name ?? 'Open shift')

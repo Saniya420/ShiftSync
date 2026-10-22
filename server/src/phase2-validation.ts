@@ -40,7 +40,7 @@ export const correctionBody = z
     (v) => !v.clockOutAt || (v.clockInAt && v.clockOutAt > v.clockInAt),
     'Clock-out requires an earlier clock-in',
   );
-const date = z
+export const date = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/)
   .refine((v) => DateTime.fromISO(v).isValid, 'Use a valid date');
