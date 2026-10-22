@@ -4,3 +4,5 @@ coverage/
 .env
 .pgdata/
 *.log
+.codex-logs/
+.cache/

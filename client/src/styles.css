@@ -1,0 +1,72 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+@import 'tailwindcss';
+@config "../tailwind.config.ts";
+
+@layer base {
+  body {
+    @apply m-0 bg-[#f6f7f4] text-slate-700 antialiased;
+    font-family: 'DM Sans', system-ui, sans-serif;
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: 'Manrope', system-ui, sans-serif;
+    @apply text-ink;
+  }
+  h1 {
+    @apply text-3xl font-bold tracking-tight sm:text-4xl;
+  }
+  h2 {
+    @apply text-lg font-bold tracking-tight;
+  }
+  h3 {
+    @apply font-bold;
+  }
+  label {
+    @apply block text-sm font-medium text-slate-600;
+  }
+  input,
+  select,
+  textarea {
+    @apply mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100;
+  }
+  input[type='checkbox'] {
+    @apply m-0 h-4 w-4 accent-emerald-700;
+  }
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    @apply focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600;
+  }
+  button:disabled {
+    @apply cursor-not-allowed opacity-50;
+  }
+}
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-900;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50;
+  }
+  .icon-btn {
+    @apply rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-ink;
+  }
+  .card {
+    @apply rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm shadow-slate-200/20;
+  }
+  .eyebrow {
+    @apply mb-3 text-[10px] font-bold tracking-[0.18em] text-emerald-700;
+  }
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-semibold;
+  }
+  .avatar {
+    @apply inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#e8eee9] text-xs font-bold text-emerald-900;
+  }
+  .screen-message {
+    @apply flex min-h-screen items-center justify-center gap-4 p-8 text-sm text-slate-500;
+  }
+}

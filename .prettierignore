@@ -1,0 +1,8 @@
+node_modules
+dist
+coverage
+.pgdata
+package-lock.json
+.codex-logs
+.cache
+docs/reports

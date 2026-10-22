@@ -1,0 +1,237 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  OWNER
+  MANAGER
+  EMPLOYEE
+}
+
+enum ShiftStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum SwapStatus {
+  PENDING
+  ACCEPTED
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum AttendanceStatus {
+  ON_TIME
+  LATE
+  NO_SHOW
+  EARLY_LEAVE
+}
+
+model Organization {
+  id            String             @id @default(cuid())
+  name          String
+  timezone      String             @default("UTC")
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  locations     Location[]
+  users         User[]
+  userLocations UserLocation[]
+  availability  Availability[]
+  timeOff       TimeOffRequest[]
+  shifts        Shift[]
+  swaps         SwapRequest[]
+  attendance    AttendanceRecord[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+}
+
+model Location {
+  id              String         @id @default(cuid())
+  organizationId  String
+  organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name            String
+  timezone        String         @default("UTC")
+  lat             Float?
+  lng             Float?
+  geofenceRadiusM Int            @default(100)
+  clockInGraceMin Int            @default(5)
+  users           UserLocation[]
+  shifts          Shift[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId])
+}
+
+model User {
+  id             String             @id @default(cuid())
+  organizationId String
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  email          String             @unique
+  passwordHash   String
+  name           String
+  role           Role               @default(EMPLOYEE)
+  hourlyRate     Decimal            @default(0) @db.Decimal(10, 2)
+  maxWeeklyHours Float              @default(40)
+  pinHash        String?
+  createdAt      DateTime           @default(now())
+  locations      UserLocation[]
+  availability   Availability[]
+  timeOff        TimeOffRequest[]
+  shifts         Shift[]
+  requestedSwaps SwapRequest[]      @relation("Requester")
+  targetedSwaps  SwapRequest[]      @relation("Target")
+  acceptedSwaps  SwapRequest[]      @relation("Acceptor")
+  attendance     AttendanceRecord[] @relation("Worker")
+  corrections    AttendanceRecord[] @relation("Corrector")
+  notifications  Notification[]
+  auditLogs      AuditLog[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId])
+}
+
+model UserLocation {
+  organizationId String
+  userId         String
+  locationId     String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [organizationId, userId], references: [organizationId, id], onDelete: Cascade)
+  location       Location     @relation(fields: [organizationId, locationId], references: [organizationId, id], onDelete: Cascade)
+
+  @@id([organizationId, userId, locationId])
+  @@index([organizationId])
+}
+
+model Availability {
+  id             String       @id @default(cuid())
+  organizationId String
+  userId         String
+  weekday        Int
+  startMinute    Int
+  endMinute      Int
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [organizationId, userId], references: [organizationId, id], onDelete: Cascade)
+
+  @@unique([organizationId, userId, weekday, startMinute])
+  @@index([organizationId])
+}
+
+model TimeOffRequest {
+  id             String        @id @default(cuid())
+  organizationId String
+  userId         String
+  startsAt       DateTime
+  endsAt         DateTime
+  reason         String?
+  status         RequestStatus @default(PENDING)
+  createdAt      DateTime      @default(now())
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User          @relation(fields: [organizationId, userId], references: [organizationId, id], onDelete: Cascade)
+
+  @@unique([organizationId, id])
+  @@index([organizationId])
+  @@index([organizationId, userId, startsAt])
+}
+
+model Shift {
+  id             String             @id @default(cuid())
+  organizationId String
+  locationId     String
+  userId         String?
+  startsAt       DateTime
+  endsAt         DateTime
+  position       String             @default("Team member")
+  notes          String?
+  status         ShiftStatus        @default(DRAFT)
+  createdAt      DateTime           @default(now())
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  location       Location           @relation(fields: [organizationId, locationId], references: [organizationId, id], onDelete: Restrict)
+  user           User?              @relation(fields: [organizationId, userId], references: [organizationId, id], onDelete: Restrict)
+  swaps          SwapRequest[]
+  attendance     AttendanceRecord[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId])
+  @@index([organizationId, locationId, startsAt])
+  @@index([organizationId, userId, startsAt])
+}
+
+model SwapRequest {
+  id             String       @id @default(cuid())
+  organizationId String
+  shiftId        String
+  requesterId    String
+  targetUserId   String?
+  acceptedById   String?
+  status         SwapStatus   @default(PENDING)
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  shift          Shift        @relation(fields: [organizationId, shiftId], references: [organizationId, id], onDelete: Cascade)
+  requester      User         @relation("Requester", fields: [organizationId, requesterId], references: [organizationId, id], onDelete: Restrict)
+  target         User?        @relation("Target", fields: [organizationId, targetUserId], references: [organizationId, id], onDelete: Restrict)
+  acceptedBy     User?        @relation("Acceptor", fields: [organizationId, acceptedById], references: [organizationId, id], onDelete: Restrict)
+
+  @@index([organizationId])
+}
+
+model AttendanceRecord {
+  id             String           @id @default(cuid())
+  organizationId String
+  shiftId        String
+  userId         String
+  clockInAt      DateTime?
+  clockOutAt     DateTime?
+  status         AttendanceStatus @default(ON_TIME)
+  correctedById  String?
+  note           String?
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  shift          Shift            @relation(fields: [organizationId, shiftId], references: [organizationId, id], onDelete: Cascade)
+  user           User             @relation("Worker", fields: [organizationId, userId], references: [organizationId, id], onDelete: Restrict)
+  correctedBy    User?            @relation("Corrector", fields: [organizationId, correctedById], references: [organizationId, id], onDelete: Restrict)
+
+  @@unique([organizationId, shiftId, userId])
+  @@index([organizationId])
+}
+
+model Notification {
+  id             String       @id @default(cuid())
+  organizationId String
+  userId         String
+  title          String
+  message        String
+  readAt         DateTime?
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [organizationId, userId], references: [organizationId, id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([organizationId, userId, readAt])
+}
+
+model AuditLog {
+  id             String       @id @default(cuid())
+  organizationId String
+  actorId        String?
+  action         String
+  entityType     String
+  entityId       String
+  details        Json?
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor          User?        @relation(fields: [organizationId, actorId], references: [organizationId, id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([organizationId, createdAt])
+}
