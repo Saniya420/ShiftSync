@@ -120,7 +120,7 @@ ShiftSync is a new, self-contained, multi-tenant web system built as three tiers
 | ID | Requirement | Priority |
 |---|---|---|
 | FR-A1 | The system shall allow a new user to sign up by providing organisation name, full name, email and password, creating an organisation with the user as Owner. | High |
-| FR-A2 | The system shall reject passwords shorter than 8 characters or lacking a letter and a digit. | High |
+| FR-A2 | The system shall reject passwords shorter than 12 characters or longer than 72 bytes (bcrypt limit). | High |
 | FR-A3 | The system shall authenticate users by email and password and issue a session token valid for 7 days. | High |
 | FR-A4 | The system shall allow users to log out, invalidating the session cookie. | High |
 | FR-A5 | The system shall allow Owners/Managers to invite employees, generating a one-time temporary password. | High |
@@ -128,7 +128,7 @@ ShiftSync is a new, self-contained, multi-tenant web system built as three tiers
 | FR-A7 | The system shall restrict every data access to the user's own organisation. | High |
 | FR-A8 | The system shall enforce role permissions (Owner > Manager > Employee) on every API endpoint. | High |
 | FR-A9 | The system shall allow Managers to set an employee's hourly rate, maximum weekly hours and position. | Medium |
-| FR-A10 | The system shall rate-limit login attempts to 10 per 15 minutes per IP address. | High |
+| FR-A10 | The system shall rate-limit authentication requests (sign-up/login) to 60 per 15 minutes per IP address. | High |
 
 **FR-R: Roster Builder**
 
@@ -252,7 +252,7 @@ flowchart LR
 | Preconditions | User has a browser and internet access. |
 | Main Flow | 1. User opens Sign-up and enters organisation name, name, email, password. 2. System validates input and checks the email is unused. 3. System creates the organisation and Owner account, hashes the password with bcrypt and sets a session cookie. 4. System opens the Dashboard. |
 | Alternative Flow | 1a. Login: user enters email and password; system verifies hash and issues session. |
-| Exceptions | E1 Email already registered → error shown. E2 Wrong credentials → generic "invalid email or password". E3 Too many attempts → HTTP 429. |
+| Exceptions | E1 Email already registered → error shown. E2 Wrong credentials → generic "invalid email or password". E3 More than 60 authentication requests in 15 minutes → HTTP 429. |
 | Postconditions | User is authenticated with a role-scoped session. |
 | Requirements | FR-A1–A4, FR-A10 |
 
@@ -355,7 +355,7 @@ flowchart LR
 | NFR-S3 | Security | **100%** of API endpoints except health, sign-up and login shall require authentication. | Automated route test. |
 | NFR-S4 | Security | No cross-tenant data access: automated isolation tests shall show **0** leaks across all resource endpoints. | Integration test suite. |
 | NFR-S5 | Security | All input shall be validated server-side (Zod); the app shall pass an OWASP Top 10 review with **0 high/critical** findings. | Week 10 audit + `npm audit`. |
-| NFR-S6 | Security | Login shall be limited to **10 attempts / 15 min / IP**. | Integration test. |
+| NFR-S6 | Security | Authentication requests shall be limited to **60 / 15 min / IP**; further attempts receive HTTP 429. | Integration test. |
 | NFR-S7 | Security | All production traffic shall use **HTTPS (TLS 1.2+)** with security headers (Helmet). | SSL Labs grade A or better. |
 | NFR-A1 | Availability | The production API shall target **99.5% monthly uptime** (≈ 3.6 h downtime/month). | Uptime monitor on `/api/health`. |
 | NFR-A2 | Reliability | Database shall be backed up **daily** with **7-day** retention (provider-managed). | Provider settings. |
