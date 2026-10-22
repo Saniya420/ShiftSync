@@ -142,13 +142,48 @@ export function RequestsPage() {
   const { user } = useAuth();
   const zone = user?.organization?.timezone ?? 'UTC';
   const [tab, setTab] = useState<'Time off' | 'Swaps'>('Time off');
+  const [statusFilter, setStatusFilter] = useState(''),
+    [dateFrom, setDateFrom] = useState(''),
+    [dateTo, setDateTo] = useState(''),
+    [selected, setSelected] = useState<string[]>([]);
+  const [batchResults, setBatchResults] = useState<
+    { id: string; ok: boolean; error?: { message: string } }[]
+  >([]);
+  const params = {
+    ...(statusFilter ? { status: statusFilter } : {}),
+    ...(dateFrom && dateTo ? { from: dateFrom, to: dateTo } : {}),
+  };
+  const cache = useQueryClient();
+  const batch = useMutation({
+    mutationFn: async (status: string) =>
+      (
+        await api.post<{ results: { id: string; ok: boolean; error?: { message: string } }[] }>(
+          '/time-off/batch-decision',
+          { ids: selected, status },
+        )
+      ).data,
+    onSuccess: async (data) => {
+      setBatchResults(data.results);
+      setSelected([]);
+      await Promise.all(
+        ['time-off', 'notifications', 'shifts'].map((key) =>
+          cache.invalidateQueries({ queryKey: [key] }),
+        ),
+      );
+      toast.success(data.results.filter((r) => r.ok).length + ' requests updated.');
+      if (data.results.some((r) => !r.ok))
+        toast.error('Some requests could not be updated. Review the results.');
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
   const timeOff = useQuery({
-    queryKey: ['time-off'],
-    queryFn: async () => (await api.get<{ requests: TimeOff[] }>('/time-off')).data.requests,
+    queryKey: ['time-off', params],
+    queryFn: async () =>
+      (await api.get<{ requests: TimeOff[] }>('/time-off', { params })).data.requests,
   });
   const swaps = useQuery({
-    queryKey: ['swaps'],
-    queryFn: async () => (await api.get<{ swaps: Swap[] }>('/swaps')).data.swaps,
+    queryKey: ['swaps', params],
+    queryFn: async () => (await api.get<{ swaps: Swap[] }>('/swaps', { params })).data.swaps,
   });
   const action = useRequestAction();
   const [review, setReview] = useState<{ id: string; warnings: Warning[] } | null>(null);
@@ -188,12 +223,117 @@ export function RequestsPage() {
           </button>
         ))}
       </div>
+      <div className="card mb-5 grid gap-3 sm:grid-cols-3">
+        <label>
+          Status
+          <select
+            value={statusFilter}
+            onChange={(e) => {
+              setStatusFilter(e.target.value);
+              setSelected([]);
+            }}
+          >
+            <option value="">All statuses</option>
+            {['PENDING', 'ACCEPTED', 'APPROVED', 'REJECTED', 'CANCELLED'].map((s) => (
+              <option key={s}>{s}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          From
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => {
+              setDateFrom(e.target.value);
+              setSelected([]);
+            }}
+          />
+        </label>
+        <label>
+          Through
+          <input
+            type="date"
+            min={dateFrom}
+            value={dateTo}
+            onChange={(e) => {
+              setDateTo(e.target.value);
+              setSelected([]);
+            }}
+          />
+        </label>
+        <p className="text-xs text-slate-500 sm:col-span-3">
+          Choose both dates to filter requests that overlap the range.
+        </p>
+      </div>
+      {tab === 'Time off' && (
+        <div className="mb-5 flex flex-wrap items-center gap-3">
+          <button
+            className="btn-secondary"
+            disabled={timeOff.isPending || !timeOff.data?.some((r) => r.status === 'PENDING')}
+            onClick={() =>
+              setSelected(
+                timeOff.data
+                  ?.filter((r) => r.status === 'PENDING')
+                  .slice(0, 100)
+                  .map((r) => r.id) ?? [],
+              )
+            }
+          >
+            Select pending shown
+          </button>
+          <span className="text-xs">{selected.length} selected</span>
+          <button
+            className="btn-primary"
+            disabled={!selected.length || batch.isPending}
+            onClick={() => batch.mutate('APPROVED')}
+          >
+            Approve selected
+          </button>
+          <button
+            className="btn-secondary"
+            disabled={!selected.length || batch.isPending}
+            onClick={() => {
+              if (window.confirm('Deny ' + selected.length + ' selected requests?'))
+                batch.mutate('REJECTED');
+            }}
+          >
+            Deny selected
+          </button>
+        </div>
+      )}
+      {batchResults.length > 0 && (
+        <ul className="card mb-5 text-sm" aria-label="Batch results">
+          {batchResults.map((r) => (
+            <li key={r.id}>
+              {timeOff.data?.find((t) => t.id === r.id)?.user.name ?? r.id}:{' '}
+              {r.ok ? 'Updated' : r.error?.message}
+            </li>
+          ))}
+        </ul>
+      )}
       <QueryState loading={loading} error={error} />
       <div className="space-y-4">
         {tab === 'Time off'
           ? timeOff.data?.map((r) => (
               <article key={r.id} className="card">
-                <h2>{r.user.name}</h2>
+                <div className="flex items-center gap-3">
+                  {r.status === 'PENDING' && (
+                    <input
+                      type="checkbox"
+                      aria-label={'Select ' + r.user.name + ' time off'}
+                      checked={selected.includes(r.id)}
+                      onChange={(e) =>
+                        setSelected(
+                          e.target.checked
+                            ? [...selected, r.id]
+                            : selected.filter((id) => id !== r.id),
+                        )
+                      }
+                    />
+                  )}
+                  <h2>{r.user.name}</h2>
+                </div>
                 <p className="my-3">{timeOffDates(r, zone)}</p>
                 <p className="mb-3 text-sm text-slate-500">
                   {r.reason} · {r.status}

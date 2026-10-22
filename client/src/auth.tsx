@@ -12,7 +12,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const session = useQuery({
     queryKey: ['me'],
     queryFn: async () => (await api.get<{ user: User }>('/auth/me')).data.user,
-    retry: false,
+    // A 401 means signed out; anything else (e.g. 502 while the API boots) is retried briefly.
+    retry: (count, error) =>
+      count < 3 &&
+      !(
+        typeof error === 'object' &&
+        error &&
+        'response' in error &&
+        (error.response as { status?: number })?.status === 401
+      ),
     staleTime: 60000,
   });
   const failed =
@@ -50,6 +58,8 @@ export function Protected({ children, roles }: { children: ReactNode; roles?: Ro
       </div>
     );
   if (!user) return <Navigate to="/login" state={{ from: location.pathname }} replace />;
+  if (user.mustChangePassword && location.pathname !== '/app/profile')
+    return <Navigate to="/app/profile" replace />;
   if (roles && !roles.includes(user.role)) return <Navigate to="/app" replace />;
   return <>{children}</>;
 }

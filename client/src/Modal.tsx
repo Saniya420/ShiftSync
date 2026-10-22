@@ -45,7 +45,7 @@ export function Modal({
   }, []);
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-0 sm:p-4 backdrop-blur-sm"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -55,7 +55,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
-        className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl sm:p-8"
+        className="h-dvh w-full max-w-xl overflow-y-auto sm:h-auto sm:max-h-[90vh] sm:rounded-2xl bg-white p-6 shadow-2xl sm:p-8"
       >
         <div className="mb-6 flex items-center justify-between">
           <h2 id="modal-title" className="text-2xl">

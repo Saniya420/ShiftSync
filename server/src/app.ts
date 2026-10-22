@@ -1,3 +1,4 @@
+import { phase3Router } from './routes/phase3.js';
 import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
@@ -56,6 +57,7 @@ app.use(
   }),
   authRouter,
 );
+app.use('/api', requireAuth, phase3Router);
 app.use('/api', requireAuth, resourceRouter);
 app.use('/api/shifts', requireAuth, shiftRouter);
 app.use('/api', requireAuth, phase2Router);

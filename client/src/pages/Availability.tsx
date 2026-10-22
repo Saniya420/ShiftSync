@@ -61,12 +61,12 @@ function AvailabilityForm({ initial }: { initial: Availability[] }) {
                 {windows.some((w) => w.weekday === weekday) ? 'Available' : 'Unavailable'}
               </p>
             </div>
-            <div className="flex-1 space-y-3">
+            <div className="min-w-0 basis-full flex-1 space-y-3 sm:basis-auto">
               {windows.map(
                 (window, i) =>
                   window.weekday === weekday && (
                     <div className="flex items-center gap-2" key={i}>
-                      <label className="flex-1">
+                      <label className="min-w-0 flex-1">
                         <span className="sr-only">
                           {days[weekday]} start {i + 1}
                         </span>

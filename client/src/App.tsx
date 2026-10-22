@@ -1,3 +1,6 @@
+import { lazy, Suspense } from 'react';
+import { QueryState } from './components';
+import { Profile } from './pages/Profile';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { Protected } from './auth';
 import { Layout } from './Layout';
@@ -9,6 +12,7 @@ import { Team } from './pages/Team';
 import { OpenShiftsPage, RequestsPage, TimeOffPage } from './pages/Requests';
 import { AttendancePage } from './pages/Attendance';
 import { TimesheetsPage } from './pages/Timesheets';
+const Admin = lazy(async () => ({ default: (await import('./pages/Admin')).Admin }));
 export function App() {
   return (
     <Routes>
@@ -23,6 +27,17 @@ export function App() {
           </Protected>
         }
       >
+        <Route path="profile" element={<Profile />} />
+        <Route
+          path="admin"
+          element={
+            <Protected roles={['OWNER', 'MANAGER']}>
+              <Suspense fallback={<QueryState loading error={false} />}>
+                <Admin />
+              </Suspense>
+            </Protected>
+          }
+        />
         <Route index element={<Dashboard />} />
         <Route
           path="roster"

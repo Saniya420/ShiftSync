@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -16,6 +17,7 @@ import toast from 'react-hot-toast';
 import { Notifications } from './Notifications';
 export function Layout() {
   const { user } = useAuth();
+  const [menuOpen, setMenuOpen] = useState(false);
   const cache = useQueryClient();
   const navigate = useNavigate();
   if (!user) return null;
@@ -24,6 +26,7 @@ export function Layout() {
     { to: '/app', label: 'Overview', icon: LayoutDashboard, end: true },
     ...(manager
       ? [
+          { to: '/app/admin', label: 'Admin', icon: LayoutDashboard, end: false },
           { to: '/app/roster', label: 'Roster builder', icon: CalendarDays, end: false },
           { to: '/app/team', label: 'Team', icon: Users, end: false },
           { to: '/app/requests', label: 'Requests', icon: CalendarDays, end: false },
@@ -31,6 +34,7 @@ export function Layout() {
           { to: '/app/timesheets', label: 'Timesheets', icon: Clock3, end: false },
         ]
       : [{ to: '/app/schedule', label: 'My schedule', icon: CalendarDays, end: false }]),
+    { to: '/app/profile', label: 'Profile', icon: Users, end: false },
     { to: '/app/availability', label: 'Availability', icon: Clock3, end: false },
     { to: '/app/time-off', label: 'Time off', icon: CalendarDays, end: false },
     ...(!manager
@@ -43,6 +47,7 @@ export function Layout() {
       // Keep the ['me'] query attached to AuthProvider (see AuthPages) and mark it signed out.
       cache.removeQueries({ predicate: (query) => query.queryKey[0] !== 'me' });
       cache.setQueryData(['me'], null);
+      toast.success('Signed out.');
       navigate('/login');
     } catch (error) {
       toast.error(errorMessage(error));
@@ -57,6 +62,14 @@ export function Layout() {
           </span>
           ShiftSync<span className="text-emerald-300">.</span>
         </NavLink>
+        <button
+          className="btn-secondary mt-4 lg:hidden"
+          aria-expanded={menuOpen}
+          aria-controls="workspace-navigation"
+          onClick={() => setMenuOpen((v) => !v)}
+        >
+          Menu
+        </button>
         <div className="mt-7 hidden rounded-xl border border-white/15 bg-white/5 px-3 py-3 lg:block">
           <p className="text-[10px] font-bold tracking-widest text-emerald-200/60">WORKSPACE</p>
           <p className="mt-1 truncate text-sm font-semibold">
@@ -65,11 +78,13 @@ export function Layout() {
           <p className="mt-1 text-xs text-white/40">One team. In sync.</p>
         </div>
         <nav
+          id="workspace-navigation"
           aria-label="Main navigation"
-          className="mt-5 flex gap-1 overflow-x-auto lg:mt-8 lg:flex-col"
+          className={(menuOpen ? 'flex' : 'hidden') + ' mt-5 flex-col gap-1 lg:mt-8 lg:flex'}
         >
           {links.map(({ to, label, icon: Icon, end }) => (
             <NavLink
+              onClick={() => setMenuOpen(false)}
               end={end}
               key={to}
               to={to}
@@ -121,6 +136,15 @@ export function Layout() {
           </span>
         </header>
         <main className="mx-auto max-w-[1600px] p-5 sm:p-10">
+          {user.mustChangePassword && (
+            <p className="card mb-5 text-amber-900">
+              Change your temporary password on the{' '}
+              <NavLink to="/app/profile" className="underline">
+                Profile page
+              </NavLink>{' '}
+              to continue.
+            </p>
+          )}
           <Outlet />
         </main>
         <footer className="px-10 pb-6 text-xs text-slate-400">
