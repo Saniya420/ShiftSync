@@ -94,7 +94,86 @@ async function main() {
           status: 'PUBLISHED',
         },
       });
+      if (startsAt.plus({ hours: 7 }) < DateTime.now()) {
+        const index = accounts.indexOf(account) % 3;
+        const status = index === 0 ? 'NO_SHOW' : index === 1 ? 'LATE' : 'ON_TIME';
+        await db.attendanceRecord.upsert({
+          where: { organizationId_shiftId_userId: { organizationId, shiftId, userId: id } },
+          update: {},
+          create: {
+            organizationId,
+            shiftId,
+            userId: id,
+            status,
+            clockInAt:
+              status === 'NO_SHOW'
+                ? null
+                : startsAt.plus({ minutes: status === 'LATE' ? 12 : 0 }).toJSDate(),
+            clockOutAt: status === 'NO_SHOW' ? null : startsAt.plus({ hours: 7 }).toJSDate(),
+          },
+        });
+      }
     }
+  }
+  const requestId = 'demo-time-off-' + monday.toISODate();
+  await db.timeOffRequest.upsert({
+    where: { organizationId_id: { organizationId, id: requestId } },
+    update: {},
+    create: {
+      id: requestId,
+      organizationId,
+      userId: 'demo-employee-2',
+      startsAt: monday.plus({ days: 5 }).toJSDate(),
+      endsAt: monday.plus({ days: 7 }).toJSDate(),
+      reason: 'Family visiting for the weekend',
+    },
+  });
+  // Create a future offer even when seeding late in the workweek.
+  const offerStart = DateTime.now()
+    .setZone(timezone)
+    .plus({ days: 1 })
+    // 07:00-11:00 so it doesn't overlap demo-employee-1's regular 12:00-19:00 shift.
+    .set({ hour: 7, minute: 0, second: 0, millisecond: 0 });
+  const offerShiftId = 'demo-offer-' + monday.toISODate();
+  const offered = await db.shift.upsert({
+    where: { organizationId_id: { organizationId, id: offerShiftId } },
+    update: { startsAt: offerStart.toJSDate(), endsAt: offerStart.plus({ hours: 4 }).toJSDate() },
+    create: {
+      id: offerShiftId,
+      organizationId,
+      locationId,
+      userId: 'demo-employee-1',
+      startsAt: offerStart.toJSDate(),
+      endsAt: offerStart.plus({ hours: 4 }).toJSDate(),
+      status: 'PUBLISHED',
+      position: 'Weekend cover',
+    },
+  });
+  const swapId = 'demo-swap-' + monday.toISODate();
+  if (
+    !(await db.swapRequest.findFirst({
+      where: {
+        organizationId,
+        OR: [{ id: swapId }, { shiftId: offered.id, status: { in: ['PENDING', 'ACCEPTED'] } }],
+      },
+    }))
+  ) {
+    await db.swapRequest.create({
+      data: { id: swapId, organizationId, shiftId: offered.id, requesterId: 'demo-employee-1' },
+    });
+  }
+  for (const account of accounts) {
+    const notificationId = 'demo-notification-' + account.id + '-' + monday.toISODate();
+    if (!(await db.notification.findFirst({ where: { organizationId, id: notificationId } })))
+      await db.notification.create({
+        data: {
+          id: notificationId,
+          organizationId,
+          userId: account.id,
+          title: 'Welcome to your week',
+          message: 'Your schedule is ready. Check your shifts and team requests.',
+        },
+      });
   }
   console.info('Corner Mart demo is ready. See prisma/SEED_ACCOUNTS.md for logins.');
 }

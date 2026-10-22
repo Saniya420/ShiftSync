@@ -14,7 +14,7 @@ async function getLocation(tx: Tx, organizationId: string, id: string) {
   if (!location) throw new AppError(404, 'NOT_FOUND', 'Location not found.');
   return location;
 }
-async function contextFor(tx: Tx, organizationId: string, startsAt: Date, endsAt: Date) {
+export async function contextFor(tx: Tx, organizationId: string, startsAt: Date, endsAt: Date) {
   const start = DateTime.fromJSDate(startsAt).minus({ weeks: 2 }).toJSDate();
   const end = DateTime.fromJSDate(endsAt).plus({ weeks: 2 }).toJSDate();
   const [users, shifts] = await Promise.all([
@@ -38,7 +38,7 @@ async function contextFor(tx: Tx, organizationId: string, startsAt: Date, endsAt
   ]);
   return { users, shifts };
 }
-function warningsFor(
+export function warningsFor(
   shift: Pick<Shift, 'userId' | 'startsAt' | 'endsAt'> & { id?: string },
   context: Awaited<ReturnType<typeof contextFor>>,
   timezone: string,
@@ -63,7 +63,7 @@ function checkOverlap(warnings: Conflict[], force: boolean) {
       { warnings },
     );
 }
-const transaction = <T>(organizationId: string, work: (tx: Tx) => Promise<T>) =>
+export const transaction = <T>(organizationId: string, work: (tx: Tx) => Promise<T>) =>
   db.$transaction(
     async (tx) => {
       // Serialize roster mutations for this authenticated tenant. READ COMMITTED
@@ -100,8 +100,22 @@ export async function listShifts(auth: Session, week: string, locationId?: strin
 }
 export async function saveShift(auth: Session, body: ShiftBody, id?: string) {
   return transaction(auth.organizationId, async (tx) => {
-    if (id && !(await tx.shift.findFirst({ where: { ...tenant(auth.organizationId), id } })))
-      throw new AppError(404, 'NOT_FOUND', 'Shift not found.');
+    const existing = id
+      ? await tx.shift.findFirst({ where: { ...tenant(auth.organizationId), id } })
+      : null;
+    if (id && !existing) throw new AppError(404, 'NOT_FOUND', 'Shift not found.');
+    if (
+      existing &&
+      existing.userId !== body.userId &&
+      (await tx.attendanceRecord.findFirst({
+        where: { ...tenant(auth.organizationId), shiftId: existing.id },
+      }))
+    )
+      throw new AppError(
+        409,
+        'ATTENDANCE_EXISTS',
+        'A shift with recorded attendance cannot change assignee.',
+      );
     const location = await getLocation(tx, auth.organizationId, body.locationId);
     if (body.userId) {
       const membership = await tx.userLocation.findFirst({

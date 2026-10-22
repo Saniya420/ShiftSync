@@ -1,7 +1,8 @@
 # ShiftSync
 
-A scheduling workspace for small retail and food-service teams. Phase 1 covers
-authentication, tenant isolation, teams, locations, recurring availability and weekly rosters.
+A scheduling workspace for small retail and food-service teams. The MVP includes
+tenant-scoped rosters, availability, time-off requests, shift handovers, attendance,
+timesheets, CSV export, and in-app notifications.
 
 ## Requirements
 
@@ -31,7 +32,9 @@ Use the `npm.cmd` spelling if PowerShell execution policy blocks `npm.ps1`;
 `npm` works normally in other shells.
 
 The seed adds Corner Mart, Main Street (Asia/Karachi), one owner, one manager,
-six employees, recurring availability and 30 published shifts in the current week.
+six employees, recurring availability and 30 published shifts in the current week,
+plus a future cover offer, pending time off, welcome notifications and attendance
+for ended shifts this week (on-time, late, and no-show).
 It is additive and can be rerun without resetting existing passwords or roster edits.
 [Demo accounts](server/prisma/SEED_ACCOUNTS.md).
 
@@ -72,7 +75,11 @@ are public; never put secrets in the client.
 ## Architecture and behavior
 
 - `server/src/domain/conflicts.ts`: pure conflict engine, tested independently.
+- `server/src/domain/swaps.ts`, `attendance.ts`, `timesheets.ts`: pure state machine,
+  attendance/geofence rules and reporting calculations with unit tests.
 - `server/src/services/roster.ts`: roster transactions and context loading.
+- `server/src/services/requests.ts`, `attendance.ts`, `reports.ts`: tenant-scoped workflows.
+- `server/src/jobs.ts`: idempotent startup/every-minute no-show detection, disabled in tests.
 - `server/src/routes/`: validated HTTP adapters.
 - `client/src/pages/`: React Router pages backed by TanStack Query.
 - `server/prisma/`: complete schema, migration, demo seed.
@@ -83,9 +90,10 @@ keys also prevent cross-tenant associations. The necessary bootstrap exceptions
 are signup, globally unique email lookup at login, and the system health probe.
 Organization records are scoped by their own primary key.
 
-Owners and managers operate tenant-wide rosters and locations in Phase 1.
-Employees can edit only their own availability and read only their own published
-shifts. Owners can promote employees to managers from Team; managers can manage
+Owners and managers operate tenant-wide rosters and locations.
+Employees can edit their availability, read their published shifts, request/cancel
+time off, offer shifts and accept eligible coworker offers, and clock in/out.
+Owners can promote employees to managers from Team; managers can manage
 employees but cannot promote managers or modify owner accounts. The spec does
 not yet define per-manager location permissions.
 
@@ -125,12 +133,41 @@ isolation, membership checks, CRUD, atomic copying, publishing and concurrent
 overlap rejection. Client tests exercise login, role guards, week navigation,
 hours, dialogs, availability submission and roster actions.
 
-## Phase boundary
+## Phase 2 workflows
 
-Swaps, time-off workflows, attendance and timesheets have Prisma models only.
+Employees use **Time off** to request inclusive date ranges and **My schedule → Swap**
+to offer a future published shift to a coworker or anyone at that location.
+**Open shifts** lists available offers and tracks their own offers. Accepting a
+handover reserves it; only manager approval reassigns the shift. Managers review
+**Requests → Time off / Swaps**. Every swap conflict blocks approval until explicitly
+reviewed and overridden. Active offers are unique per shift at the database level.
+
+The employee overview shows a large **Clock in / Clock out** button for an active
+shift, available 15 minutes before start. Enter a PIN if the account has one configured;
+browser geolocation is requested when available. Location geofences apply when
+coordinates are supplied. Managers open **Attendance** for a live Today board and
+can correct existing records with a required audit note. Missed shifts become
+NO_SHOW after their end plus 30 minutes. The board uses the organization timezone;
+shift times display in each location's timezone.
+
+**Timesheets** provides manager/owner date and location filters and CSV download.
+Actual hours require a completed attendance record. Weekly overtime is based on
+actual hours across locations and full local weeks; selected dates are inclusive.
+Estimated cost uses scheduled hours and current hourly rates, without premiums or
+taxes. The bell shows unread notifications, individual read controls, and read-all.
+
+The demo seed preserves edits and existing request decisions when rerun. Attendance
+fixtures only populate already ended shifts, so early Monday may have no past-day
+attendance yet. The dedicated future offer is created once per week and keeps its
+original time when reseeded. Use employee1 for the cover offer and employee2 for the
+pending time-off request. Any other demo employee at Main Street can accept open offers.
+
+## Remaining scope
+
 Email delivery, password reset/mandatory temporary-password rotation, notification
-inbox, audit viewer and manager-specific location authorization are later work.
+pagination beyond the latest 100, a standalone audit viewer, PIN provisioning UI,
+and manager-specific location authorization are later work.
 Logout clears the browser cookie; issued JWTs are stateless and cannot be revoked
 individually before expiry.
 
-See [API reference](docs/API.md) and [Phase 1 progress](docs/PROGRESS.md).
+See [API reference](docs/API.md) and [progress](docs/PROGRESS.md).

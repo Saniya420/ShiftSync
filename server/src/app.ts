@@ -10,6 +10,7 @@ import { requireAuth, authRouter } from './auth.js';
 import { AppError, errorHandler, logger, route } from './http.js';
 import { resourceRouter } from './routes/resources.js';
 import { shiftRouter } from './routes/shifts.js';
+import { phase2Router } from './routes/phase2.js';
 export const app = express();
 app.disable('x-powered-by');
 app.use(helmet());
@@ -57,5 +58,6 @@ app.use(
 );
 app.use('/api', requireAuth, resourceRouter);
 app.use('/api/shifts', requireAuth, shiftRouter);
+app.use('/api', requireAuth, phase2Router);
 app.use((_req, _res, next) => next(new AppError(404, 'NOT_FOUND', 'Endpoint not found.')));
 app.use(errorHandler);

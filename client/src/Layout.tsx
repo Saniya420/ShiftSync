@@ -13,6 +13,7 @@ import { api, errorMessage } from './api';
 import { useAuth } from './auth';
 import { initials } from './components';
 import toast from 'react-hot-toast';
+import { Notifications } from './Notifications';
 export function Layout() {
   const { user } = useAuth();
   const cache = useQueryClient();
@@ -25,9 +26,16 @@ export function Layout() {
       ? [
           { to: '/app/roster', label: 'Roster builder', icon: CalendarDays, end: false },
           { to: '/app/team', label: 'Team', icon: Users, end: false },
+          { to: '/app/requests', label: 'Requests', icon: CalendarDays, end: false },
+          { to: '/app/attendance', label: 'Attendance', icon: Clock3, end: false },
+          { to: '/app/timesheets', label: 'Timesheets', icon: Clock3, end: false },
         ]
       : [{ to: '/app/schedule', label: 'My schedule', icon: CalendarDays, end: false }]),
     { to: '/app/availability', label: 'Availability', icon: Clock3, end: false },
+    { to: '/app/time-off', label: 'Time off', icon: CalendarDays, end: false },
+    ...(!manager
+      ? [{ to: '/app/open-shifts', label: 'Open shifts', icon: CalendarDays, end: false }]
+      : []),
   ];
   const logout = async () => {
     try {
@@ -105,7 +113,8 @@ export function Layout() {
       <div className="min-w-0 flex-1 lg:ml-64">
         <header className="flex h-16 items-center justify-between border-b border-slate-200/70 bg-white/70 px-5 sm:px-10">
           <p className="text-xs font-medium text-slate-400">WORK BETTER, TOGETHER</p>
-          <span className="flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-xs text-emerald-800">
+          <Notifications />
+          <span className="hidden items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-xs text-emerald-800 sm:flex">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
             Your team workspace
             <ArrowUpRight size={12} />

@@ -14,6 +14,8 @@ import {
   WeekPicker,
 } from '../components';
 import type { Shift, User } from '../types';
+import { ClockCard } from './Attendance';
+import { SwapOffer } from './Requests';
 export function Dashboard() {
   const { user } = useAuth();
   const manager = user?.role !== 'EMPLOYEE';
@@ -82,6 +84,7 @@ export function Dashboard() {
           </Link>
         }
       />
+      {!manager && <ClockCard />}
       <div className="mb-7 flex items-center gap-4 rounded-2xl border border-[#d8e8d8] bg-[#eaf1e7] px-6 py-5">
         <Sun size={30} className="shrink-0 text-emerald-700" />
         <div>
@@ -188,6 +191,7 @@ export function Dashboard() {
   );
 }
 export function MySchedule() {
+  const [offered, setOffered] = useState<Shift | null>(null);
   const { user } = useAuth();
   const [week, setWeek] = useState(currentWeek(user?.organization?.timezone));
   const query = useQuery({
@@ -236,6 +240,11 @@ export function MySchedule() {
                   </p>
                 )}
                 <span className="badge mt-5 bg-emerald-50 text-emerald-700">Published</span>
+                {Date.parse(s.startsAt) > Date.now() && (
+                  <button className="btn-secondary ml-3" onClick={() => setOffered(s)}>
+                    Swap
+                  </button>
+                )}
               </article>
             ))}
           </div>
@@ -245,6 +254,7 @@ export function MySchedule() {
             description="Published shifts will appear here as soon as your manager shares the roster."
           />
         ))}
+      {offered && <SwapOffer shift={offered} close={() => setOffered(null)} />}
     </>
   );
 }

@@ -6,6 +6,9 @@ import { Dashboard, MySchedule } from './pages/SchedulePages';
 import { Roster } from './pages/Roster';
 import { AvailabilityPage } from './pages/Availability';
 import { Team } from './pages/Team';
+import { OpenShiftsPage, RequestsPage, TimeOffPage } from './pages/Requests';
+import { AttendancePage } from './pages/Attendance';
+import { TimesheetsPage } from './pages/Timesheets';
 export function App() {
   return (
     <Routes>
@@ -39,6 +42,32 @@ export function App() {
         />
         <Route path="schedule" element={<MySchedule />} />
         <Route path="availability" element={<AvailabilityPage />} />
+        <Route path="time-off" element={<TimeOffPage />} />
+        <Route path="open-shifts" element={<OpenShiftsPage />} />
+        <Route
+          path="requests"
+          element={
+            <Protected roles={['OWNER', 'MANAGER']}>
+              <RequestsPage />
+            </Protected>
+          }
+        />
+        <Route
+          path="attendance"
+          element={
+            <Protected roles={['OWNER', 'MANAGER']}>
+              <AttendancePage />
+            </Protected>
+          }
+        />
+        <Route
+          path="timesheets"
+          element={
+            <Protected roles={['OWNER', 'MANAGER']}>
+              <TimesheetsPage />
+            </Protected>
+          }
+        />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

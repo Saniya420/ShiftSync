@@ -169,6 +169,8 @@ model Shift {
 }
 
 model SwapRequest {
+  // The migration also enforces one active (PENDING/ACCEPTED) swap per shift
+  // with a PostgreSQL partial unique index, which is maintained in SQL.
   id             String       @id @default(cuid())
   organizationId String
   shiftId        String
@@ -184,6 +186,7 @@ model SwapRequest {
   acceptedBy     User?        @relation("Acceptor", fields: [organizationId, acceptedById], references: [organizationId, id], onDelete: Restrict)
 
   @@index([organizationId])
+  @@index([organizationId, status])
 }
 
 model AttendanceRecord {
@@ -203,6 +206,7 @@ model AttendanceRecord {
 
   @@unique([organizationId, shiftId, userId])
   @@index([organizationId])
+  @@index([organizationId, userId])
 }
 
 model Notification {

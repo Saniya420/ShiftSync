@@ -1,0 +1,383 @@
+import { useState, type FormEvent } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { DateTime } from 'luxon';
+import axios from 'axios';
+import toast from 'react-hot-toast';
+import { api, errorMessage } from '../api';
+import { useAuth } from '../auth';
+import { Empty, PageHeading, QueryState } from '../components';
+import { Modal } from '../Modal';
+import type { Shift, Warning } from '../types';
+export interface TimeOff {
+  id: string;
+  userId: string;
+  startsAt: string;
+  endsAt: string;
+  reason: string;
+  status: string;
+  user: { name: string };
+}
+export interface Swap {
+  id: string;
+  requesterId: string;
+  acceptedById: string | null;
+  status: string;
+  requester: { name: string };
+  acceptedBy: { name: string } | null;
+  target: { name: string } | null;
+  shift: Shift;
+}
+export const dateLabel = (value: string, zone = 'UTC') =>
+  DateTime.fromISO(value).setZone(zone).toFormat('MMM d, yyyy HH:mm');
+const timeOffDates = (request: TimeOff, zone: string) =>
+  DateTime.fromISO(request.startsAt).setZone(zone).toFormat('MMM d, yyyy') +
+  ' – ' +
+  DateTime.fromISO(request.endsAt).setZone(zone).minus({ milliseconds: 1 }).toFormat('MMM d, yyyy');
+export function useRequestAction() {
+  const cache = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ path, body = {} }: { path: string; body?: object }) =>
+      api.post(path, body),
+    onSuccess: async () => {
+      await Promise.all(
+        ['time-off', 'swaps', 'shifts', 'notifications', 'attendance', 'timesheets'].map((key) =>
+          cache.invalidateQueries({ queryKey: [key] }),
+        ),
+      );
+      toast.success('Saved.');
+    },
+    onError: (err) => toast.error(errorMessage(err)),
+  });
+}
+export function TimeOffPage() {
+  const { user } = useAuth();
+  const zone = user?.organization?.timezone ?? 'UTC';
+  const [from, setFrom] = useState(''),
+    [to, setTo] = useState(''),
+    [reason, setReason] = useState('');
+  const query = useQuery({
+    queryKey: ['time-off'],
+    queryFn: async () => (await api.get<{ requests: TimeOff[] }>('/time-off')).data.requests,
+  });
+  const action = useRequestAction();
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    action.mutate(
+      {
+        path: '/time-off',
+        body: {
+          startsAt: DateTime.fromISO(from, { zone }).startOf('day').toISO(),
+          endsAt: DateTime.fromISO(to, { zone }).plus({ days: 1 }).startOf('day').toISO(),
+          reason,
+        },
+      },
+      { onSuccess: () => setReason('') },
+    );
+  };
+  return (
+    <>
+      <PageHeading
+        title="Time off"
+        description={'Request whole days away. Dates use ' + zone + '.'}
+      />
+      <form onSubmit={submit} className="card mb-6 grid gap-4 sm:grid-cols-2">
+        <label>
+          From
+          <input type="date" required value={from} onChange={(e) => setFrom(e.target.value)} />
+        </label>
+        <label>
+          Through
+          <input
+            type="date"
+            required
+            min={from}
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+          />
+        </label>
+        <label className="sm:col-span-2">
+          Reason
+          <textarea
+            required
+            maxLength={1000}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+        </label>
+        <button className="btn-primary justify-center" disabled={action.isPending}>
+          Request time off
+        </button>
+      </form>
+      <QueryState loading={query.isPending} error={query.isError} />
+      <div className="space-y-3">
+        {query.data
+          ?.filter((r) => r.userId === user?.id)
+          .map((r) => (
+            <article className="card" key={r.id}>
+              <p>{timeOffDates(r, zone)}</p>
+              <p className="my-3 text-sm text-slate-500">{r.reason}</p>
+              <span className="badge bg-slate-100">{r.status}</span>
+              {['PENDING', 'APPROVED'].includes(r.status) && (
+                <button
+                  className="btn-secondary ml-3"
+                  disabled={action.isPending}
+                  onClick={() => action.mutate({ path: '/time-off/' + r.id + '/cancel' })}
+                >
+                  Cancel request
+                </button>
+              )}
+            </article>
+          ))}
+      </div>
+      {query.data && !query.data.some((r) => r.userId === user?.id) && (
+        <Empty
+          title="No time off requested"
+          description="Your requests and their decisions will appear here."
+        />
+      )}
+    </>
+  );
+}
+export function RequestsPage() {
+  const { user } = useAuth();
+  const zone = user?.organization?.timezone ?? 'UTC';
+  const [tab, setTab] = useState<'Time off' | 'Swaps'>('Time off');
+  const timeOff = useQuery({
+    queryKey: ['time-off'],
+    queryFn: async () => (await api.get<{ requests: TimeOff[] }>('/time-off')).data.requests,
+  });
+  const swaps = useQuery({
+    queryKey: ['swaps'],
+    queryFn: async () => (await api.get<{ swaps: Swap[] }>('/swaps')).data.swaps,
+  });
+  const action = useRequestAction();
+  const [review, setReview] = useState<{ id: string; warnings: Warning[] } | null>(null);
+  const approve = async (id: string, force = false) => {
+    try {
+      await action.mutateAsync({ path: '/swaps/' + id + '/approve', body: { force } });
+      setReview(null);
+    } catch (err) {
+      if (
+        axios.isAxiosError(err) &&
+        err.response?.status === 409 &&
+        err.response.data.error.details?.warnings
+      )
+        setReview({ id, warnings: err.response.data.error.details.warnings });
+    }
+  };
+  const loading = tab === 'Time off' ? timeOff.isPending : swaps.isPending;
+  const error = tab === 'Time off' ? timeOff.isError : swaps.isError;
+  return (
+    <>
+      <PageHeading
+        title="Requests"
+        description={
+          'Review time away and shift handovers for your team. Time-off dates use ' + zone + '.'
+        }
+      />
+      <div role="tablist" className="mb-6 flex gap-3">
+        {(['Time off', 'Swaps'] as const).map((v) => (
+          <button
+            key={v}
+            role="tab"
+            aria-selected={tab === v}
+            className={tab === v ? 'btn-primary' : 'btn-secondary'}
+            onClick={() => setTab(v)}
+          >
+            {v}
+          </button>
+        ))}
+      </div>
+      <QueryState loading={loading} error={error} />
+      <div className="space-y-4">
+        {tab === 'Time off'
+          ? timeOff.data?.map((r) => (
+              <article key={r.id} className="card">
+                <h2>{r.user.name}</h2>
+                <p className="my-3">{timeOffDates(r, zone)}</p>
+                <p className="mb-3 text-sm text-slate-500">
+                  {r.reason} · {r.status}
+                </p>
+                {r.status === 'PENDING' && (
+                  <div className="flex gap-3">
+                    {(['APPROVED', 'REJECTED'] as const).map((status) => (
+                      <button
+                        className="btn-secondary"
+                        key={status}
+                        disabled={action.isPending}
+                        onClick={() =>
+                          action.mutate({
+                            path: '/time-off/' + r.id + '/decision',
+                            body: { status },
+                          })
+                        }
+                      >
+                        {status === 'APPROVED' ? 'Approve' : 'Deny'}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </article>
+            ))
+          : swaps.data?.map((s) => (
+              <article key={s.id} className="card">
+                <h2>
+                  {s.requester.name} → {s.acceptedBy?.name ?? s.target?.name ?? 'Open offer'}
+                </h2>
+                <p className="my-3">
+                  {dateLabel(s.shift.startsAt, s.shift.location?.timezone)} ·{' '}
+                  {s.shift.location?.name} · {s.status}
+                </p>
+                <div className="flex gap-3">
+                  {s.status === 'ACCEPTED' && (
+                    <button
+                      disabled={action.isPending}
+                      className="btn-primary"
+                      onClick={() => void approve(s.id)}
+                    >
+                      Approve
+                    </button>
+                  )}
+                  {['PENDING', 'ACCEPTED'].includes(s.status) && (
+                    <button
+                      disabled={action.isPending}
+                      className="btn-secondary"
+                      onClick={() => action.mutate({ path: '/swaps/' + s.id + '/reject' })}
+                    >
+                      Reject
+                    </button>
+                  )}
+                </div>
+              </article>
+            ))}
+      </div>
+      {!loading &&
+        !error &&
+        (tab === 'Time off' ? timeOff.data?.length === 0 : swaps.data?.length === 0) && (
+          <Empty title="All clear" description="Team requests will appear here." />
+        )}
+      {review && (
+        <Modal title="Review swap conflicts" onClose={() => setReview(null)}>
+          <ul className="my-4 space-y-2">
+            {review.warnings.map((w, i) => (
+              <li key={i}>
+                {w.type}: {w.message}
+              </li>
+            ))}
+          </ul>
+          <button
+            disabled={action.isPending}
+            className="btn-primary"
+            onClick={() => void approve(review.id, true)}
+          >
+            Approve with conflicts
+          </button>
+        </Modal>
+      )}
+    </>
+  );
+}
+export function SwapOffer({ shift, close }: { shift: Shift; close: () => void }) {
+  const [targetUserId, setTarget] = useState('');
+  const coworkers = useQuery({
+    queryKey: ['coworkers', shift.id],
+    queryFn: async () =>
+      (
+        await api.get<{ users: { id: string; name: string }[] }>('/swaps/coworkers', {
+          params: { shiftId: shift.id },
+        })
+      ).data.users,
+  });
+  const action = useRequestAction();
+  return (
+    <Modal title="Offer your shift" onClose={close}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          action.mutate(
+            {
+              path: '/swaps',
+              body: { shiftId: shift.id, ...(targetUserId ? { targetUserId } : {}) },
+            },
+            { onSuccess: close },
+          );
+        }}
+      >
+        <p className="mb-4">{dateLabel(shift.startsAt, shift.location?.timezone)}</p>
+        <QueryState loading={coworkers.isPending} error={coworkers.isError} />
+        <label>
+          Offer to
+          <select value={targetUserId} onChange={(e) => setTarget(e.target.value)}>
+            <option value="">Anyone at this location</option>
+            {coworkers.data?.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          className="btn-primary mt-5"
+          disabled={action.isPending || coworkers.isPending || coworkers.isError}
+        >
+          Offer shift
+        </button>
+      </form>
+    </Modal>
+  );
+}
+export function OpenShiftsPage() {
+  const { user } = useAuth();
+  const query = useQuery({
+    queryKey: ['swaps'],
+    queryFn: async () => (await api.get<{ swaps: Swap[] }>('/swaps')).data.swaps,
+    refetchInterval: 30000,
+  });
+  const action = useRequestAction();
+  return (
+    <>
+      <PageHeading
+        title="Open shifts"
+        description="Pick up a coworker's shift, or follow your own offers. A manager confirms each handover."
+      />
+      <QueryState loading={query.isPending} error={query.isError} />
+      <div className="space-y-4">
+        {query.data?.map((s) => (
+          <article className="card" key={s.id}>
+            <h2>
+              {s.shift.position} · {s.requester.name}
+            </h2>
+            <p className="my-3">
+              {dateLabel(s.shift.startsAt, s.shift.location?.timezone)} · {s.shift.location?.name}
+            </p>
+            <p className="mb-4 text-sm text-slate-500">
+              {s.status}
+              {s.acceptedBy && ' · Accepted by ' + s.acceptedBy.name}
+            </p>
+            {s.status === 'PENDING' && s.requesterId !== user?.id && (
+              <button
+                disabled={action.isPending}
+                className="btn-primary"
+                onClick={() => action.mutate({ path: '/swaps/' + s.id + '/accept' })}
+              >
+                Accept shift
+              </button>
+            )}
+            {s.requesterId === user?.id && ['PENDING', 'ACCEPTED'].includes(s.status) && (
+              <button
+                disabled={action.isPending}
+                className="btn-secondary"
+                onClick={() => action.mutate({ path: '/swaps/' + s.id + '/cancel' })}
+              >
+                Cancel offer
+              </button>
+            )}
+          </article>
+        ))}
+      </div>
+      {query.data?.length === 0 && (
+        <Empty title="No offers yet" description="Available shift offers will appear here." />
+      )}
+    </>
+  );
+}

@@ -5,6 +5,8 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import { db, publicUser, tenant } from './db.js';
+// Login, signup and /me all return the same shape so the client session cache is consistent.
+const sessionUser = { ...publicUser, organization: { select: { name: true, timezone: true } } };
 import { config } from './config.js';
 import { AppError, route } from './http.js';
 
@@ -104,7 +106,7 @@ authRouter.post(
         name: body.organizationName,
         users: { create: { email: body.email, name: body.name, passwordHash, role: 'OWNER' } },
       },
-      include: { users: { select: publicUser } },
+      include: { users: { select: sessionUser } },
     });
     const user = organization.users[0];
     signIn(res, user);
@@ -122,7 +124,7 @@ authRouter.post(
     signIn(res, user);
     const safe = await db.user.findFirstOrThrow({
       where: { ...tenant(user.organizationId), id: user.id },
-      select: publicUser,
+      select: sessionUser,
     });
     res.json({ user: safe });
   }),
@@ -142,7 +144,7 @@ authRouter.get(
   route(async (req, res) => {
     const user = await db.user.findFirstOrThrow({
       where: { ...tenant(req.auth.organizationId), id: req.auth.id },
-      select: { ...publicUser, organization: { select: { name: true, timezone: true } } },
+      select: sessionUser,
     });
     res.json({ user });
   }),
