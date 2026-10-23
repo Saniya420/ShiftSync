@@ -135,7 +135,14 @@ resourceRouter.post(
     const { locationIds, ...data } = body;
     const user = await db.$transaction(async (tx) => {
       const created = await tx.user.create({
-        data: { ...data, passwordHash, role: 'EMPLOYEE', ...tenant(req.auth.organizationId) },
+        // Temp passwords are shown to the manager once; the employee must replace it on first login.
+        data: {
+          ...data,
+          passwordHash,
+          mustChangePassword: true,
+          role: 'EMPLOYEE',
+          ...tenant(req.auth.organizationId),
+        },
         select: publicUser,
       });
       await tx.userLocation.createMany({

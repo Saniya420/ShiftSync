@@ -61,6 +61,11 @@ beforeAll(async () => {
       .post('/api/auth/login')
       .send({ email: result.body.user.email, password: result.body.tempPassword })
       .expect(200);
+    // Invited accounts must replace their temporary password before using the API.
+    await agent
+      .put('/api/profile')
+      .send({ currentPassword: result.body.tempPassword, password: 'Rotated-password-1' })
+      .expect(200);
     await agent
       .put('/api/availability')
       .send({
