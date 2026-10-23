@@ -8,3 +8,4 @@ coverage/
 .cache/
 .vercel
 .env*
+!.env.example
