@@ -1,0 +1,17 @@
+# Never upload local secrets, the local database cluster, build output or tool folders.
+.env
+.env.*
+**/.env
+**/.env.*
+!**/.env.example
+.pgdata
+.codex-logs
+.cache
+.agents
+.claude
+node_modules
+**/node_modules
+server/dist
+client/dist
+coverage
+docs/reports

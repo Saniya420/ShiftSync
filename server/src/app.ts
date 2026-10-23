@@ -1,4 +1,5 @@
 import { phase3Router } from './routes/phase3.js';
+import { timingSafeEqual } from 'node:crypto';
 import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
@@ -12,8 +13,11 @@ import { AppError, errorHandler, logger, route } from './http.js';
 import { resourceRouter } from './routes/resources.js';
 import { shiftRouter } from './routes/shifts.js';
 import { phase2Router } from './routes/phase2.js';
+import { runEmailSweep, runNoShowSweep } from './jobs.js';
 export const app = express();
 app.disable('x-powered-by');
+// Behind Vercel's proxy the client IP is in X-Forwarded-For (needed for auth rate limiting).
+if (process.env.VERCEL) app.set('trust proxy', 1);
 app.use(helmet());
 app.use(cors({ origin: config.CLIENT_ORIGINS, credentials: true }));
 app.use(pinoHttp({ logger }));
@@ -39,6 +43,23 @@ app.get(
     } catch {
       throw new AppError(503, 'DATABASE_UNAVAILABLE', 'Database is unavailable.');
     }
+  }),
+);
+// Vercel Cron calls this with "Authorization: Bearer $CRON_SECRET"; without a secret it is off.
+app.get(
+  '/api/cron/run',
+  route(async (req, res) => {
+    const expected = config.CRON_SECRET && 'Bearer ' + config.CRON_SECRET;
+    const given = req.headers.authorization ?? '';
+    if (
+      !expected ||
+      given.length !== expected.length ||
+      !timingSafeEqual(Buffer.from(given), Buffer.from(expected))
+    )
+      throw new AppError(401, 'UNAUTHENTICATED', 'Cron secret required.');
+    await runNoShowSweep();
+    await runEmailSweep();
+    res.json({ ok: true });
   }),
 );
 app.use(

@@ -118,6 +118,10 @@ describe('auth and access', () => {
   it('checks health against PostgreSQL', async () => {
     expect((await request(app).get('/api/health').expect(200)).body.database).toBe('connected');
   });
+  it('refuses the cron endpoint without the shared secret', async () => {
+    await request(app).get('/api/cron/run').expect(401);
+    await request(app).get('/api/cron/run').set('Authorization', 'Bearer wrong-secret').expect(401);
+  });
   it('uses httpOnly SameSite cookies and bcrypt cost 12', async () => {
     const login = await request(app)
       .post('/api/auth/login')

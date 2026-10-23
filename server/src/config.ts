@@ -12,6 +12,8 @@ const env = z
       .string()
       .regex(/^[a-zA-Z0-9.-]+$/)
       .default('gemini-flash-lite-latest'),
+    // Shared secret Vercel Cron sends to /api/cron/run; unset disables the endpoint.
+    CRON_SECRET: z.string().min(16).optional(),
     RESEND_API_KEY: z.string().optional(),
     SMTP_URL: z.string().optional(),
     EMAIL_FROM: z.string().default('ShiftSync <notifications@shiftsync.local>'),
@@ -20,7 +22,10 @@ const env = z
     // Comma-separated list of allowed browser origins.
     CLIENT_ORIGIN: z.string().default('http://localhost:5173,http://127.0.0.1:5173'),
     PORT: z.coerce.number().int().min(1).max(65535).default(3001),
-    NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+    // On Vercel, default to production so cookies are always marked Secure.
+    NODE_ENV: z
+      .enum(['development', 'test', 'production'])
+      .default(process.env.VERCEL ? 'production' : 'development'),
   })
   // API_PORT wins over PORT so tools that inject PORT for the client dev server don't hijack the API.
   .parse({ ...process.env, PORT: process.env.API_PORT ?? process.env.PORT });
