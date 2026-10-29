@@ -12,14 +12,11 @@ import {
   Legend,
   BarChart,
   Bar,
-  PieChart,
-  Pie,
-  Cell,
 } from 'recharts';
 import toast from 'react-hot-toast';
 import { api, errorMessage } from '../api';
 import { useAuth } from '../auth';
-import { PageHeading, QueryState, Empty } from '../components';
+import { money, PageHeading, QueryState, Empty } from '../components';
 import { Modal } from '../Modal';
 import type { Location, User } from '../types';
 interface Analytics {
@@ -41,6 +38,20 @@ const labels: Record<string, string> = {
   timeOffVolume: 'Time-off requests',
   coverage: 'Assigned coverage',
 };
+const kpiGroups = [
+  { title: 'Hours and labour', keys: ['scheduledHours', 'actualHours', 'labourCost'] },
+  { title: 'Attendance', keys: ['attendanceRate', 'lateRate', 'noShowRate', 'coverage'] },
+  { title: 'Requests', keys: ['swapVolume', 'swapApprovalRate', 'timeOffVolume'] },
+];
+function formatKpi(key: string, value: number) {
+  if (key.endsWith('Rate') || key === 'coverage') return value.toFixed(1) + '%';
+  if (key.endsWith('Volume')) return value.toFixed(0);
+  if (key === 'labourCost') return money(value);
+  return value.toFixed(1) + ' h';
+}
+const inkColor = '#1b1d21';
+const stampColor = '#4a40a8';
+const axisTick = { fontSize: 12, fill: '#555c64', fontFamily: 'Azeret Mono, monospace' };
 export function Admin() {
   const { user } = useAuth();
   const [tab, setTab] = useState('Analytics');
@@ -67,7 +78,7 @@ export function Admin() {
   return (
     <>
       <PageHeading
-        title="Admin workspace"
+        title="Admin"
         description={
           user?.role === 'OWNER'
             ? 'Understand your business and manage access.'
@@ -80,7 +91,7 @@ export function Admin() {
             key={t}
             role="tab"
             aria-selected={tab === t}
-            className={tab === t ? 'btn-primary' : 'btn-secondary'}
+            className={(tab === t ? 'btn-primary' : 'btn-secondary') + ' py-2'}
             onClick={() => setTab(t)}
           >
             {t}
@@ -89,7 +100,7 @@ export function Admin() {
       </div>
       {tab === 'Analytics' ? (
         <>
-          <div className="card mb-6 grid gap-4 sm:grid-cols-3">
+          <div className="mb-6 grid gap-3 sm:grid-cols-3">
             <label>
               From
               <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -113,19 +124,35 @@ export function Admin() {
           <QueryState loading={query.isFetching} error={query.isError} />
           {query.data && (
             <>
-              <p className="mb-4 text-xs text-slate-500">
+              <p className="mb-4 text-sm text-slate-500">
                 Dates use {query.data.timezone}. Rates use completed assigned shifts. Labour cost
                 uses scheduled hours times current hourly rates.
               </p>
-              <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-5">
-                {Object.entries(query.data.kpis).map(([key, value]) => (
-                  <article className="card p-4" key={key}>
-                    <p className="text-xs text-slate-500">{labels[key] ?? key}</p>
-                    <p className="mt-2 text-2xl font-bold text-ink">
-                      {value.toFixed(key.endsWith('Volume') ? 0 : 1)}
-                      {key.endsWith('Rate') || key === 'coverage' ? '%' : ''}
-                    </p>
-                  </article>
+              <div className="mb-6 grid gap-px overflow-hidden rounded-[10px] border border-slate-200 bg-slate-200 md:grid-cols-3">
+                {kpiGroups.map((group) => (
+                  <section className="bg-white p-5" key={group.title}>
+                    <h2 className="text-base">{group.title}</h2>
+                    <dl className="mt-3 space-y-2">
+                      {group.keys.map((key, i) => (
+                        <div
+                          key={key}
+                          className={
+                            'flex items-baseline justify-between gap-4 ' +
+                            (i === 0 ? 'border-b border-dashed border-slate-300 pb-2' : '')
+                          }
+                        >
+                          <dt className="text-sm text-slate-600">{labels[key] ?? key}</dt>
+                          <dd
+                            className={
+                              'num text-ink ' + (i === 0 ? 'text-2xl font-semibold' : 'text-sm')
+                            }
+                          >
+                            {formatKpi(key, query.data.kpis[key] ?? 0)}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </section>
                 ))}
               </div>
               {!query.data.kpis.scheduledHours && (
@@ -140,46 +167,27 @@ export function Admin() {
                   <div className="h-72">
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={query.data.daily}>
-                        <CartesianGrid stroke="#e2e8f0" />
-                        <XAxis dataKey="date" tick={{ fontSize: 10 }} />
-                        <YAxis width={35} />
+                        <CartesianGrid stroke="#eceef0" vertical={false} />
+                        <XAxis dataKey="date" tick={axisTick} />
+                        <YAxis width={35} tick={axisTick} />
                         <Tooltip />
                         <Legend />
                         <Line
                           dataKey="scheduledHours"
                           name="Scheduled"
-                          stroke="#047857"
+                          stroke={inkColor}
                           strokeWidth={2}
+                          dot={false}
                         />
                         <Line
                           dataKey="actualHours"
                           name="Actual"
-                          stroke="#7c3aed"
+                          stroke={stampColor}
                           strokeWidth={2}
+                          strokeDasharray="5 3"
+                          dot={false}
                         />
                       </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                </section>
-                <section className="card min-w-0">
-                  <h2>Attendance status</h2>
-                  <div className="h-72">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={query.data.attendance}
-                          dataKey="value"
-                          nameKey="name"
-                          innerRadius="45%"
-                          outerRadius="70%"
-                        >
-                          {query.data.attendance.map((d, i) => (
-                            <Cell key={d.name} fill={['#047857', '#d97706', '#dc2626'][i]} />
-                          ))}
-                        </Pie>
-                        <Tooltip />
-                        <Legend />
-                      </PieChart>
                     </ResponsiveContainer>
                   </div>
                 </section>
@@ -188,36 +196,31 @@ export function Admin() {
                   <div className="h-72">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={query.data.daily}>
-                        <XAxis dataKey="date" tick={{ fontSize: 10 }} />
-                        <YAxis width={45} />
+                        <XAxis dataKey="date" tick={axisTick} />
+                        <YAxis width={45} tick={axisTick} />
                         <Tooltip />
                         <Bar
                           dataKey="labourCost"
                           name="Labour cost"
-                          fill="#047857"
-                          radius={[4, 4, 0, 0]}
+                          fill={inkColor}
+                          radius={[2, 2, 0, 0]}
                         />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
                 </section>
-                <section className="card min-w-0">
+                <section className="card min-w-0 xl:col-span-2">
                   <h2 className="mb-5">Hours per employee</h2>
                   <div className="max-h-[600px] overflow-y-auto">
                     <div style={{ height: Math.max(280, query.data.hoursPerEmployee.length * 45) }}>
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={query.data.hoursPerEmployee} layout="vertical">
-                          <XAxis type="number" />
-                          <YAxis
-                            dataKey="name"
-                            type="category"
-                            width={85}
-                            tick={{ fontSize: 10 }}
-                          />
+                          <XAxis type="number" tick={axisTick} />
+                          <YAxis dataKey="name" type="category" width={85} tick={axisTick} />
                           <Tooltip />
                           <Legend />
-                          <Bar dataKey="scheduledHours" name="Scheduled" fill="#047857" />
-                          <Bar dataKey="actualHours" name="Actual" fill="#7c3aed" />
+                          <Bar dataKey="scheduledHours" name="Scheduled" fill={inkColor} />
+                          <Bar dataKey="actualHours" name="Actual" fill={stampColor} />
                         </BarChart>
                       </ResponsiveContainer>
                     </div>
@@ -369,12 +372,12 @@ function AdminUsers() {
             <div className="min-w-0">
               <h2>{u.name}</h2>
               <p className="break-all text-sm text-slate-500">{u.email}</p>
-              <span className="badge bg-slate-100">
+              <span className={'stamp mt-1 ' + (u.active === false ? 'stamp-muted' : 'stamp-ok')}>
                 {u.active === false ? 'Inactive' : 'Active'}
               </span>
             </div>
             {u.role === 'OWNER' ? (
-              <span className="badge bg-emerald-50">Owner</span>
+              <span className="stamp stamp-muted">Owner</span>
             ) : (
               <div className="flex flex-wrap items-center gap-2">
                 <select
@@ -383,8 +386,8 @@ function AdminUsers() {
                   disabled={mutation.isPending}
                   onChange={(e) => mutation.mutate({ id: u.id, body: { role: e.target.value } })}
                 >
-                  <option>EMPLOYEE</option>
-                  <option>MANAGER</option>
+                  <option value="EMPLOYEE">Employee</option>
+                  <option value="MANAGER">Manager</option>
                 </select>
                 <button
                   className="btn-secondary"

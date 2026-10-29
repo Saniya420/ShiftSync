@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { DateTime } from 'luxon';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
-import { AlertTriangle, Copy, Plus, Send, Trash2, CalendarDays } from 'lucide-react';
+import { AlertTriangle, Copy, Plus, Send, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api, errorMessage } from '../api';
 import { useAuth } from '../auth';
@@ -13,24 +13,47 @@ import {
   currentWeek,
   Empty,
   initials,
+  money,
   PageHeading,
   QueryState,
   scheduledHours,
+  Stamp,
   WeekPicker,
 } from '../components';
 import { Modal } from '../Modal';
 import type { Location, Shift, User, Warning } from '../types';
 type Selection = { shift?: Shift; userId: string | null; date: string };
-const colors = [
-  'bg-[#e6f1e8] border-[#cde3d1] text-[#346246]',
-  'bg-[#efedf8] border-[#dfdaf0] text-[#665490]',
-  'bg-[#f8eedf] border-[#eddfc8] text-[#8a6b38]',
-  'bg-[#e5eff6] border-[#cee1ef] text-[#4b728e]',
+// A position keeps the same colour tick everywhere; colour never encodes row order.
+// No reds, ambers or oranges here: those hues mean trouble on this screen.
+const positionTicks = [
+  'bg-sky-600',
+  'bg-teal-600',
+  'bg-fuchsia-600',
+  'bg-lime-600',
+  'bg-cyan-800',
+  'bg-pink-400',
 ];
+export function positionTick(position: string) {
+  let hash = 0;
+  for (const char of position.toLowerCase()) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return positionTicks[hash % positionTicks.length];
+}
+const warningWords: Record<string, string> = {
+  OVERLAP: 'Overlap',
+  OUTSIDE_AVAILABILITY: 'Unavailable',
+  TIME_OFF: 'On leave',
+  WEEKLY_HOURS: 'Over hours',
+  REST: 'Short rest',
+  UNDERSTAFFED: 'Understaffed',
+  INVALID_TIME: 'Bad time',
+};
+export const warningLabel = (w: Warning) => warningWords[w.type] ?? w.type;
+const hm = (value: string, zone: string) => DateTime.fromISO(value).setZone(zone).toFormat('HH:mm');
 export function Roster() {
   const { user } = useAuth();
   const cache = useQueryClient();
   const [aiOpen, setAiOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const [positionFilter, setPositionFilter] = useState('');
   const [week, setWeek] = useState(currentWeek(user?.organization?.timezone));
   const [selectedLocation, setSelectedLocation] = useState('');
@@ -38,6 +61,7 @@ export function Roster() {
   const [pendingAction, setPendingAction] = useState<'copy-previous-week' | 'publish' | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [actionWarnings, setActionWarnings] = useState<Warning[]>([]);
+  const [publishedAt, setPublishedAt] = useState<string | null>(null);
   const locations = useQuery({
     queryKey: ['locations'],
     queryFn: async () => (await api.get<{ locations: Location[] }>('/locations')).data.locations,
@@ -70,6 +94,25 @@ export function Roster() {
   const days = Array.from({ length: 7 }, (_, i) =>
     DateTime.fromISO(week, { zone }).plus({ days: i }),
   );
+  const today = DateTime.now().setZone(zone);
+  const inDay = (list: Shift[], day: DateTime) =>
+    list.filter(
+      (s) =>
+        DateTime.fromISO(s.startsAt) < day.plus({ days: 1 }) && DateTime.fromISO(s.endsAt) > day,
+    );
+  // Hours of each shift that fall inside this calendar day, so overnight shifts split correctly.
+  const dayHours = (list: Shift[], day: DateTime) =>
+    list.reduce(
+      (sum, s) =>
+        sum +
+        Math.max(
+          0,
+          Math.min(Date.parse(s.endsAt), day.plus({ days: 1 }).toMillis()) -
+            Math.max(Date.parse(s.startsAt), day.toMillis()),
+        ) /
+          3600000,
+      0,
+    );
   const refresh = async () => {
     await cache.invalidateQueries({ queryKey: ['shifts'] });
   };
@@ -77,10 +120,12 @@ export function Roster() {
     setActionBusy(true);
     setActionWarnings([]);
     setPendingAction(null);
+    setReviewOpen(false);
     try {
       const result = await api.post('/shifts/' + kind, { week, locationId, force });
       await refresh();
       setActionWarnings(result.data.warnings ?? []);
+      if (kind === 'publish') setPublishedAt(today.toFormat('ccc HH:mm'));
       toast.success(
         kind === 'publish'
           ? result.data.published + ' shifts published.'
@@ -96,45 +141,86 @@ export function Roster() {
       setActionBusy(false);
     }
   };
-  const hasDraft = shifts.some((s) => s.status === 'DRAFT');
+  const drafts = allShifts.filter((s) => s.status === 'DRAFT');
+  const hasDraft = drafts.length > 0;
   const warningCount = shifts.filter((s) => s.warnings.length).length;
+  const positions = [...new Set(allShifts.map((s) => s.position))];
+  const weekHours = scheduledHours(shifts, week, zone);
+  const weekCost = shifts.reduce(
+    (sum, s) =>
+      sum +
+      scheduledHours([s], week, zone) *
+        Number(team.data?.find((u) => u.id === s.userId)?.hourlyRate ?? 0),
+    0,
+  );
   return (
     <>
       <PageHeading
-        eyebrow="A GOOD WEEK, BY DESIGN"
-        title="Your weekly roster"
-        description="The right people, in the right place. Let’s get your week in sync."
+        title="Roster"
+        description="Build the week, clear the warnings, then publish it to your team."
+        meta={
+          location &&
+          location.name +
+            ' · ' +
+            zone +
+            ' · ' +
+            shifts.length +
+            ' shifts · ' +
+            weekHours.toFixed(1) +
+            ' h'
+        }
         action={
-          <button
-            className="btn-primary"
-            disabled={!locationId}
-            onClick={() => setSelection({ userId: rows[0]?.id ?? null, date: week })}
-          >
-            <Plus size={16} />
-            Add shift
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              className="btn-secondary"
+              disabled={!locationId || actionBusy}
+              onClick={() => void action('copy-previous-week')}
+            >
+              <Copy size={15} />
+              Copy last week
+            </button>
+            <button
+              className="btn-secondary"
+              disabled={!locationId}
+              onClick={() => setSelection({ userId: rows[0]?.id ?? null, date: week })}
+            >
+              <Plus size={16} />
+              Add shift
+            </button>
+            <button
+              className="btn-primary"
+              disabled={!locationId || actionBusy || !hasDraft}
+              aria-describedby="publish-state"
+              onClick={() => setReviewOpen(true)}
+            >
+              <Send size={15} />
+              {actionBusy ? 'Working…' : 'Publish week'}
+            </button>
+          </div>
         }
       />
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           <WeekPicker
             week={week}
             onChange={(v) => {
               setWeek(v);
               setActionWarnings([]);
               setPendingAction(null);
+              setPublishedAt(null);
             }}
           />
           <label className="min-w-40">
             <span className="sr-only">Location</span>
             <select
               aria-label="Location"
-              className="m-0 py-3"
+              className="m-0 py-2.5"
               value={locationId}
               onChange={(e) => {
                 setSelectedLocation(e.target.value);
                 setActionWarnings([]);
                 setPendingAction(null);
+                setPublishedAt(null);
               }}
             >
               {locations.data?.map((l) => (
@@ -145,48 +231,35 @@ export function Roster() {
             </select>
           </label>
         </div>
-        <div className="flex gap-2">
-          <button
-            className="btn-secondary"
-            disabled={!locationId || actionBusy}
-            onClick={() => void action('copy-previous-week')}
-          >
-            <Copy size={15} />
-            Copy last week
-          </button>
-          <button
-            className="btn-primary"
-            disabled={!locationId || actionBusy || !hasDraft}
-            onClick={() => void action('publish')}
-          >
-            <Send size={15} />
-            {actionBusy ? 'Working…' : 'Publish week'}
-          </button>
-        </div>
-      </div>
-      {location && (
-        <div className="mb-5 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-400">
-          <span className="flex items-center gap-1.5">
-            <CalendarDays size={14} />
-            {zone}
-          </span>
-          <span>{shifts.length} shifts</span>
-          <span>{scheduledHours(shifts, week, zone).toFixed(1)} scheduled hours</span>
-          <span className={hasDraft ? 'text-amber-700' : 'text-emerald-700'}>
-            {hasDraft ? 'Draft changes to publish' : 'All shifts published'}
-          </span>
+        <p id="publish-state" className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
+          {location &&
+            (hasDraft ? (
+              <>
+                <Stamp status="DRAFT">{drafts.length} draft</Stamp>
+                not published yet
+              </>
+            ) : allShifts.length ? (
+              <>
+                <Stamp status="PUBLISHED">
+                  {publishedAt ? 'Published ' + publishedAt : 'Published'}
+                </Stamp>
+                Nothing new to publish
+              </>
+            ) : (
+              'No shifts this week yet'
+            ))}
           {warningCount > 0 && (
-            <span className="flex items-center gap-1 text-amber-700">
-              <AlertTriangle size={13} />
-              {warningCount} shifts need attention
-            </span>
+            <Stamp status="LATE">
+              <AlertTriangle size={12} aria-hidden="true" />
+              {warningCount} with warnings
+            </Stamp>
           )}
-        </div>
-      )}
+        </p>
+      </div>
       {actionWarnings.length > 0 && (
         <div
           role="alert"
-          className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"
+          className="mb-5 rounded-[10px] border border-red-300 bg-red-50 p-4 text-sm text-red-900"
         >
           <strong>Review these conflicts</strong>
           <ul className="mt-2 list-inside list-disc">
@@ -205,17 +278,26 @@ export function Roster() {
           )}
         </div>
       )}
-      <div className="mb-5 flex flex-wrap items-end gap-3">
-        <label>
-          Position
-          <select value={positionFilter} onChange={(e) => setPositionFilter(e.target.value)}>
+      <div className="mb-4 flex flex-wrap items-end gap-2 text-sm">
+        <label className="min-w-44">
+          <span className="sr-only">Position</span>
+          <select
+            aria-label="Position"
+            className="m-0 py-2"
+            value={positionFilter}
+            onChange={(e) => setPositionFilter(e.target.value)}
+          >
             <option value="">All positions</option>
-            {[...new Set(allShifts.map((s) => s.position))].map((p) => (
+            {positions.map((p) => (
               <option key={p}>{p}</option>
             ))}
           </select>
         </label>
-        <button className="btn-secondary" disabled={!locationId} onClick={() => setAiOpen(true)}>
+        <button
+          className="btn-secondary py-2"
+          disabled={!locationId}
+          onClick={() => setAiOpen(true)}
+        >
           Suggest with AI
         </button>
         <RosterBatch
@@ -241,84 +323,85 @@ export function Roster() {
         error={locations.isError || team.isError || roster.isError}
       />
       {locations.data?.length === 0 && (
-        <>
-          <Empty
-            title="Let’s set the scene"
-            description="Add your first location and invite your team to start building a roster."
-          />
-          <Link to="/app/team" className="btn-primary mt-4">
-            Set up your team
-          </Link>
-        </>
+        <Empty
+          title="Add a location first"
+          description="A roster belongs to a location. Add one and invite your team to start building."
+          action={
+            <Link to="/app/team" className="btn-primary">
+              Set up your team
+            </Link>
+          }
+        />
       )}
       {location && team.data && !roster.isPending && !roster.isError && (
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <table className="w-full roster-grid min-w-[1120px] table-fixed border-collapse text-left">
+        <div className="overflow-x-auto rounded-[10px] border border-slate-300 bg-white">
+          <table className="roster-grid w-full min-w-[1080px] table-fixed border-collapse text-left">
             <thead>
-              <tr className="bg-[#f9faf8]">
-                <th className="w-52 border-b border-r border-slate-200 p-5 text-xs font-semibold text-slate-400">
-                  TEAM MEMBER{' '}
-                  <span className="ml-1 rounded bg-slate-100 px-1.5 py-0.5">{rows.length}</span>
+              <tr className="bg-slate-50">
+                <th className="w-52 border-r border-b border-slate-200 px-4 py-3 text-xs font-medium text-slate-600">
+                  Team · <span className="num">{rows.length}</span>
                 </th>
-                {days.map((day) => (
-                  <th
-                    key={day.toISODate()}
-                    className={
-                      'border-b border-r border-slate-200 p-4 text-center ' +
-                      (day.hasSame(DateTime.now().setZone(zone), 'day') ? 'bg-emerald-50' : '')
-                    }
-                  >
-                    <p className="text-[10px] uppercase tracking-wider text-slate-400">
-                      {day.toFormat('ccc')}
-                    </p>
-                    <p className="mt-1 text-lg font-bold text-ink">{day.toFormat('dd')}</p>
-                  </th>
-                ))}
+                {days.map((day) => {
+                  const isToday = day.hasSame(today, 'day');
+                  return (
+                    <th
+                      key={day.toISODate()}
+                      aria-current={isToday ? 'date' : undefined}
+                      className={
+                        'border-r border-b border-slate-200 px-2 py-2.5 text-center ' +
+                        (isToday
+                          ? 'bg-stamp-50 shadow-[inset_0_-3px_0_var(--color-stamp-600)]'
+                          : '')
+                      }
+                    >
+                      <span className="block text-xs font-medium text-slate-600">
+                        {isToday ? 'Today' : day.toFormat('ccc')}
+                      </span>
+                      <span className="num block text-lg font-semibold text-ink">
+                        {day.toFormat('dd')}
+                      </span>
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
-              {[...rows, null].map((person, rowIndex) => {
+              {[...rows, null].map((person) => {
                 const own = shifts.filter((s) => s.userId === (person?.id ?? null));
                 const hours = scheduledHours(own, week, zone);
+                const over = person ? hours > person.maxWeeklyHours : false;
                 return (
-                  <tr key={person?.id ?? 'open'} className="group">
-                    <th className="border-b border-r border-slate-100 p-4 align-top font-normal">
+                  <tr key={person?.id ?? 'open'}>
+                    <th className="border-r border-b border-slate-100 px-4 py-3 align-top font-normal">
                       <div className="flex items-center gap-2.5">
-                        <span className="avatar h-9 w-9">
-                          {person ? initials(person.name) : '+'}
+                        <span className="avatar h-8 w-8">
+                          {person ? initials(person.name) : <Plus size={14} />}
                         </span>
                         <div className="min-w-0">
-                          <p className="truncate text-xs font-semibold text-ink">
+                          <p className="truncate text-sm font-semibold text-ink">
                             {person?.name ?? 'Open shifts'}
                           </p>
-                          <p className="mt-1 text-[10px] text-slate-400">
-                            {person ? person.role.toLowerCase() : 'Ready to assign'}
+                          <p className="text-xs text-slate-500">
+                            {person
+                              ? person.role.charAt(0) + person.role.slice(1).toLowerCase()
+                              : 'Not assigned yet'}
                           </p>
                         </div>
                       </div>
-                      <div className="mt-3 flex justify-between text-[10px]">
-                        <span
-                          className={
-                            person && hours > person.maxWeeklyHours
-                              ? 'font-bold text-amber-700'
-                              : 'text-slate-400'
-                          }
-                        >
+                      <div className="num mt-2.5 flex justify-between text-xs">
+                        <span className={over ? 'font-semibold text-red-700' : 'text-slate-600'}>
                           {hours.toFixed(1)}h{person ? ' / ' + person.maxWeeklyHours + 'h' : ''}
                         </span>
                         {person && (
-                          <span className="text-slate-400">
-                            {(hours * Number(person.hourlyRate)).toFixed(2)}
+                          <span className="text-slate-500">
+                            {money(hours * Number(person.hourlyRate))}
                           </span>
                         )}
                       </div>
                       {person && (
-                        <div className="mt-2 h-1 overflow-hidden rounded-full bg-slate-100">
+                        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-slate-100">
                           <div
-                            className={
-                              'h-full rounded-full ' +
-                              (hours > person.maxWeeklyHours ? 'bg-amber-400' : 'bg-emerald-300')
-                            }
+                            className={'h-full ' + (over ? 'bg-red-600' : 'bg-ink')}
                             style={{
                               width:
                                 Math.min(100, (hours / Math.max(1, person.maxWeeklyHours)) * 100) +
@@ -328,19 +411,19 @@ export function Roster() {
                         </div>
                       )}
                     </th>
-                    {days.map((day) => {
-                      const inDay = own.filter(
-                        (s) =>
-                          DateTime.fromISO(s.startsAt) < day.plus({ days: 1 }) &&
-                          DateTime.fromISO(s.endsAt) > day,
-                      );
-                      return (
-                        <td
-                          key={day.toISODate()}
-                          className="border-b border-r border-slate-100 p-2 align-top"
-                        >
-                          <div className="min-h-28 space-y-2">
-                            {inDay.map((s) => (
+                    {days.map((day) => (
+                      <td
+                        key={day.toISODate()}
+                        className={
+                          'border-r border-b border-slate-100 p-1.5 align-top ' +
+                          (day.hasSame(today, 'day') ? 'bg-stamp-50/40' : '')
+                        }
+                      >
+                        <div className="min-h-24 space-y-1.5">
+                          {inDay(own, day).map((s) => {
+                            const draft = s.status === 'DRAFT';
+                            const trouble = s.warnings.length > 0;
+                            return (
                               <button
                                 key={s.id}
                                 onClick={() =>
@@ -354,69 +437,134 @@ export function Roster() {
                                   'Edit ' +
                                   (person?.name ?? 'open') +
                                   ' shift on ' +
-                                  day.toISODate()
+                                  day.toISODate() +
+                                  (draft ? ', draft' : ', published') +
+                                  (trouble
+                                    ? ', warnings: ' + s.warnings.map((w) => w.message).join(' ')
+                                    : '')
                                 }
                                 className={
-                                  'w-full rounded-lg border p-2.5 text-left transition hover:brightness-95 ' +
-                                  (s.warnings.length
-                                    ? 'border-amber-300 bg-amber-50 text-amber-900'
-                                    : colors[rowIndex % colors.length])
+                                  'relative w-full rounded-md py-2 pr-2 pl-3 text-left transition hover:border-ink ' +
+                                  (trouble
+                                    ? 'border border-red-400 bg-red-50'
+                                    : draft
+                                      ? 'draft-slip'
+                                      : 'border border-slate-300 bg-white')
                                 }
                               >
-                                <p className="text-[11px] font-bold">
-                                  {DateTime.fromISO(s.startsAt).setZone(zone).toFormat('HH:mm')} –{' '}
-                                  {DateTime.fromISO(s.endsAt).setZone(zone).toFormat('HH:mm')}
-                                </p>
-                                <p className="mt-1 truncate text-[10px] opacity-70">{s.position}</p>
-                                <div className="mt-2 flex items-center justify-between">
-                                  <span className="text-[9px] opacity-60">
-                                    {s.status === 'DRAFT' ? 'Draft' : 'Published'}
+                                <span
+                                  className={
+                                    'absolute top-2 bottom-2 left-1 w-[3px] rounded-full ' +
+                                    positionTick(s.position)
+                                  }
+                                  aria-hidden="true"
+                                />
+                                <span className="num block text-[13px] font-semibold text-ink">
+                                  {hm(s.startsAt, zone)}–{hm(s.endsAt, zone)}
+                                </span>
+                                <span
+                                  className={
+                                    'block truncate text-xs ' +
+                                    (draft ? 'text-slate-500 italic' : 'text-slate-600')
+                                  }
+                                >
+                                  {draft ? 'Draft · ' : ''}
+                                  {s.position}
+                                </span>
+                                {trouble && (
+                                  <span className="mt-1 flex flex-wrap gap-1">
+                                    {[...new Set(s.warnings.map(warningLabel))].map((w) => (
+                                      <span
+                                        key={w}
+                                        className="rounded-sm bg-red-700 px-1 text-[11px] font-semibold text-white"
+                                      >
+                                        {w}
+                                      </span>
+                                    ))}
                                   </span>
-                                  {s.warnings.length > 0 && (
-                                    <span
-                                      title={s.warnings.map((w) => w.message).join(' ')}
-                                      className="flex items-center gap-1 text-[9px]"
-                                    >
-                                      <AlertTriangle size={12} />
-                                      {s.warnings.length}
-                                    </span>
-                                  )}
-                                </div>
+                                )}
                               </button>
-                            ))}
-                            <button
-                              aria-label={
-                                'Add ' + (person?.name ?? 'open') + ' shift on ' + day.toISODate()
-                              }
-                              className="flex w-full items-center justify-center rounded-lg border border-dashed border-transparent py-2 text-slate-300 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700"
-                              onClick={() =>
-                                setSelection({ userId: person?.id ?? null, date: day.toISODate()! })
-                              }
-                            >
-                              <Plus size={14} />
-                            </button>
-                          </div>
-                        </td>
-                      );
-                    })}
+                            );
+                          })}
+                          <button
+                            aria-label={
+                              'Add ' + (person?.name ?? 'open') + ' shift on ' + day.toISODate()
+                            }
+                            className="flex w-full items-center justify-center rounded-md border border-dashed border-transparent py-1.5 text-slate-400 transition hover:border-slate-400 hover:bg-white hover:text-ink focus-visible:border-slate-400"
+                            onClick={() =>
+                              setSelection({ userId: person?.id ?? null, date: day.toISODate()! })
+                            }
+                          >
+                            <Plus size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    ))}
                   </tr>
                 );
               })}
             </tbody>
+            <tfoot>
+              <tr className="bg-slate-50 align-top">
+                <th className="border-r border-slate-200 px-4 pt-2 pb-3 font-normal">
+                  <span className="tally tally-total flex justify-between text-sm">
+                    <span>{weekHours.toFixed(1)} h</span>
+                    <span>{money(weekCost)}</span>
+                  </span>
+                  <span className="mt-1 block text-xs text-slate-500">Week total · labour</span>
+                </th>
+                {days.map((day) => {
+                  const list = inDay(shifts, day);
+                  const filled = list.filter((s) => s.userId);
+                  const open = list.length - filled.length;
+                  return (
+                    <td key={day.toISODate()} className="border-r border-slate-200 px-2 pt-2 pb-3">
+                      <span className="tally block text-right">
+                        <span className="block text-ink">{dayHours(list, day).toFixed(1)} h</span>
+                        <span className="block">
+                          {new Set(filled.map((s) => s.userId)).size} on
+                        </span>
+                        {open > 0 && <span className="block text-red-700">{open} open</span>}
+                      </span>
+                    </td>
+                  );
+                })}
+              </tr>
+            </tfoot>
           </table>
         </div>
       )}
-      <div className="mt-5 flex flex-wrap items-center gap-5 text-[11px] text-slate-400">
-        <span className="flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-emerald-300" />
-          Scheduled shift
+      <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-600">
+        {positions.map((p) => (
+          <span key={p} className="flex items-center gap-1.5">
+            <span className={'h-3 w-[3px] rounded-full ' + positionTick(p)} aria-hidden="true" />
+            {p}
+          </span>
+        ))}
+        <span className="flex items-center gap-1.5">
+          <span className="draft-slip h-3 w-5 rounded-sm" aria-hidden="true" />
+          Draft
         </span>
-        <span className="flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-amber-300" />
-          Conflict to review
+        <span className="flex items-center gap-1.5">
+          <span className="h-3 w-5 rounded-sm border border-red-400 bg-red-50" aria-hidden="true" />
+          Has warnings
         </span>
-        <span>Labor estimates use hourly rates; taxes and overtime premiums are excluded.</span>
+        <span className="text-slate-500">
+          Labour uses hourly rates only; taxes and overtime premiums are not included.
+        </span>
       </div>
+      {reviewOpen && (
+        <PublishReview
+          drafts={drafts}
+          people={team.data ?? []}
+          week={week}
+          zone={zone}
+          locationName={location?.name ?? ''}
+          busy={actionBusy}
+          onClose={() => setReviewOpen(false)}
+          onPublish={() => void action('publish')}
+        />
+      )}
       {selection && location && (
         <ShiftModal
           selection={selection}
@@ -430,6 +578,97 @@ export function Roster() {
         />
       )}
     </>
+  );
+}
+function PublishReview({
+  drafts,
+  people,
+  week,
+  zone,
+  locationName,
+  busy,
+  onClose,
+  onPublish,
+}: {
+  drafts: Shift[];
+  people: User[];
+  week: string;
+  zone: string;
+  locationName: string;
+  busy: boolean;
+  onClose: () => void;
+  onPublish: () => void;
+}) {
+  const notified = new Set(drafts.map((s) => s.userId).filter(Boolean)).size;
+  const open = drafts.filter((s) => !s.userId).length;
+  const warned = drafts.filter((s) => s.warnings.length);
+  const hours = scheduledHours(drafts, week, zone);
+  const cost = drafts.reduce(
+    (sum, s) =>
+      sum +
+      scheduledHours([s], week, zone) *
+        Number(people.find((u) => u.id === s.userId)?.hourlyRate ?? 0),
+    0,
+  );
+  const start = DateTime.fromISO(week);
+  return (
+    <Modal title="Publish this week?" onClose={onClose}>
+      <p className="text-sm text-slate-600">
+        {locationName} ·{' '}
+        <span className="num">
+          {start.toFormat('dd LLL')} – {start.plus({ days: 6 }).toFormat('dd LLL yyyy')}
+        </span>
+      </p>
+      <dl className="mt-5 space-y-2 text-sm">
+        {[
+          ['Draft shifts going live', String(drafts.length)],
+          ['People notified', String(notified)],
+          ['Open shifts with nobody assigned', String(open)],
+          ['Hours', hours.toFixed(1) + ' h'],
+        ].map(([label, value]) => (
+          <div key={label} className="flex items-baseline justify-between gap-4">
+            <dt className="text-slate-600">{label}</dt>
+            <dd className="num text-ink">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <div className="tally tally-total mt-3 flex justify-between text-sm">
+        <span className="font-sans">Labour for these shifts</span>
+        <span>{money(cost)}</span>
+      </div>
+      {warned.length > 0 ? (
+        <div className="mt-5 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-900">
+          <strong>
+            {warned.length} {warned.length === 1 ? 'shift has' : 'shifts have'} warnings
+          </strong>
+          <ul className="mt-1.5 list-inside list-disc">
+            {[...new Set(warned.flatMap((s) => s.warnings.map((w) => w.message)))]
+              .slice(0, 6)
+              .map((m) => (
+                <li key={m}>{m}</li>
+              ))}
+          </ul>
+        </div>
+      ) : (
+        <p className="mt-5 flex items-center gap-2 text-sm text-slate-600">
+          <Stamp status="APPROVED">No warnings</Stamp>
+          Every draft passed the conflict check.
+        </p>
+      )}
+      <p className="mt-5 text-sm text-slate-600">
+        Your team sees these shifts and gets a notification as soon as you publish. You can still
+        edit a published shift afterwards.
+      </p>
+      <div className="mt-6 flex justify-end gap-2">
+        <button type="button" className="btn-secondary" onClick={onClose}>
+          Keep editing
+        </button>
+        <button className="btn-primary" disabled={busy} onClick={onPublish}>
+          <Send size={15} />
+          Publish and notify
+        </button>
+      </div>
+    </Modal>
   );
 }
 function ShiftModal({
@@ -519,7 +758,7 @@ function ShiftModal({
   return (
     <Modal title={shift ? 'Edit shift' : 'Make a plan'} onClose={onClose}>
       <form className="space-y-4" onSubmit={save}>
-        <p className="text-xs text-slate-400">
+        <p className="text-sm text-slate-500">
           {location.name} · {zone}
         </p>
         <label>
@@ -565,13 +804,13 @@ function ShiftModal({
           />
         </label>
         <label>
-          Notes <span className="font-normal text-slate-400">(optional)</span>
+          Notes <span className="font-normal text-slate-500">(optional)</span>
           <textarea name="notes" rows={2} maxLength={1000} defaultValue={shift?.notes ?? ''} />
         </label>
         {warnings.length > 0 && (
           <div
             role="alert"
-            className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900"
+            className="rounded-md border border-red-300 bg-red-50 p-4 text-sm text-red-900"
           >
             <strong className="flex items-center gap-2">
               <AlertTriangle size={15} />
@@ -585,7 +824,7 @@ function ShiftModal({
           </div>
         )}
         {overlap && (
-          <label className="flex items-start gap-2 text-xs">
+          <label className="flex items-start gap-2 text-sm">
             <input name="force" type="checkbox" />
             <span>I’ve reviewed the overlap. Save this shift anyway.</span>
           </label>
@@ -595,7 +834,7 @@ function ShiftModal({
             <button
               type="button"
               disabled={busy}
-              className="inline-flex items-center gap-1 text-xs font-semibold text-red-600"
+              className="inline-flex items-center gap-1 text-sm font-semibold text-red-700"
               onClick={() => void remove()}
             >
               <Trash2 size={14} />

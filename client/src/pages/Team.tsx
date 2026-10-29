@@ -59,14 +59,14 @@ export function Team() {
         }
       />
       {credentials && (
-        <div role="status" className="mb-6 rounded-xl border border-emerald-200 bg-emerald-50 p-5">
+        <div role="status" className="mb-6 rounded-xl border border-stamp-200 bg-stamp-50 p-5">
           <h3 className="text-sm">Your employee’s sign-in details</h3>
           <p className="mt-2 break-all text-sm">
             {credentials.email}
             <br />
             <strong>{credentials.password}</strong>
           </p>
-          <p className="mt-2 text-xs text-emerald-900/60">
+          <p className="mt-2 text-xs text-stamp-900/60">
             Share these directly with your employee. This password is shown once.
           </p>
           <div className="mt-3 flex gap-3">
@@ -84,7 +84,7 @@ export function Team() {
               <Copy size={14} />
               Copy details
             </button>
-            <button className="text-sm text-emerald-800" onClick={() => setCredentials(null)}>
+            <button className="text-sm text-stamp-800" onClick={() => setCredentials(null)}>
               Dismiss
             </button>
           </div>
@@ -138,12 +138,12 @@ export function Team() {
           )}
           <section className="card mb-8 overflow-x-auto p-0">
             <div className="flex items-center gap-2 border-b border-slate-100 p-5">
-              <Users size={18} className="text-emerald-700" />
+              <Users size={18} className="text-slate-500" aria-hidden="true" />
               <h2 className="text-base">Your team</h2>
-              <span className="badge bg-slate-100 text-slate-500">{team.data.length}</span>
+              <span className="num text-sm text-slate-500">{team.data.length}</span>
             </div>
             <table className="w-full min-w-[650px] text-left text-sm">
-              <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-400">
+              <thead className="bg-slate-50 text-xs text-slate-600">
                 <tr>
                   {['Team member', 'Role', 'Hourly rate', 'Weekly limit', ''].map((v, i) => (
                     <th className="px-5 py-3 font-semibold" key={i}>
@@ -168,8 +168,8 @@ export function Team() {
                       </div>
                     </td>
                     <td className="px-5 capitalize">{person.role.toLowerCase()}</td>
-                    <td className="px-5">{Number(person.hourlyRate).toFixed(2)}</td>
-                    <td className="px-5">{person.maxWeeklyHours}h</td>
+                    <td className="num px-5">{Number(person.hourlyRate).toFixed(2)}</td>
+                    <td className="num px-5">{person.maxWeeklyHours} h</td>
                     <td className="px-5">
                       {person.role !== 'OWNER' &&
                         (user?.role === 'OWNER' || person.role === 'EMPLOYEE') && (
@@ -199,7 +199,7 @@ export function Team() {
               {locations.data.map((location) => (
                 <article className="card" key={location.id}>
                   <div className="flex items-start justify-between">
-                    <span className="rounded-xl bg-emerald-50 p-3 text-emerald-700">
+                    <span className="rounded-xl bg-stamp-50 p-3 text-stamp-700">
                       <MapPin size={20} />
                     </span>
                     <div>

@@ -170,7 +170,7 @@ export function AiRoster({
         </form>
       ) : (
         <div className="space-y-4">
-          <span className="badge bg-emerald-100 text-emerald-900">
+          <span className="badge bg-stamp-100 text-stamp-900">
             {preview.source === 'gemini' ? 'Gemini' : 'Smart fallback'}
           </span>
           <p className="text-sm">{preview.explanation}</p>

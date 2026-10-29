@@ -4,7 +4,7 @@ import { DateTime } from 'luxon';
 import toast from 'react-hot-toast';
 import { api, errorMessage } from '../api';
 import { useAuth } from '../auth';
-import { PageHeading, QueryState } from '../components';
+import { money, PageHeading, QueryState } from '../components';
 import type { Location } from '../types';
 interface Row {
   userId: string;
@@ -66,7 +66,7 @@ export function TimesheetsPage() {
           </button>
         }
       />
-      <div className="card mb-6 grid gap-4 sm:grid-cols-3">
+      <div className="mb-6 grid gap-3 sm:grid-cols-3">
         <label>
           From
           <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -91,39 +91,75 @@ export function TimesheetsPage() {
         loading={query.isLoading || locations.isPending}
         error={query.isError || locations.isError}
       />
-      <p className="mb-4 text-xs text-slate-500">
+      <p className="mb-4 max-w-prose text-sm text-slate-500">
         Dates are inclusive in {query.data?.timezone ?? 'the selected timezone'}. Actual hours use
         completed records. Overtime counts actual hours above the employee’s weekly limit across
         locations. No overtime premium is assumed.
       </p>
       {query.data && (
-        <div className="card overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead>
+        <div className="card overflow-x-auto p-0 sm:p-0">
+          <table className="w-full min-w-[640px] text-left text-sm">
+            <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-600">
               <tr>
                 {['Employee', 'Scheduled', 'Actual', 'Overtime', 'Late', 'Estimated cost'].map(
-                  (h) => (
-                    <th className="p-3" key={h}>
+                  (h, i) => (
+                    <th className={'px-4 py-3 font-medium ' + (i ? 'text-right' : '')} key={h}>
                       {h}
                     </th>
                   ),
                 )}
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-slate-100">
               {query.data.rows.map((r) => (
-                <tr className="border-t border-slate-100" key={r.userId}>
-                  <th className="p-3">{r.name}</th>
+                <tr key={r.userId}>
+                  <th className="px-4 py-3 font-semibold text-ink">{r.name}</th>
                   {[r.scheduledHours, r.actualHours, r.overtimeHours].map((v, i) => (
-                    <td className="p-3" key={i}>
+                    <td
+                      className={
+                        'num px-4 py-3 text-right ' +
+                        (i === 2 && v > 0 ? 'font-semibold text-red-700' : 'text-ink')
+                      }
+                      key={i}
+                    >
                       {v.toFixed(2)}h
                     </td>
                   ))}
-                  <td className="p-3">{r.lateCount}</td>
-                  <td className="p-3">{r.estimatedCost.toFixed(2)}</td>
+                  <td
+                    className={
+                      'num px-4 py-3 text-right ' +
+                      (r.lateCount ? 'font-semibold text-red-700' : 'text-ink')
+                    }
+                  >
+                    {r.lateCount}
+                  </td>
+                  <td className="num px-4 py-3 text-right text-ink">{money(r.estimatedCost)}</td>
                 </tr>
               ))}
             </tbody>
+            <tfoot className="font-mono text-ink" style={{ fontVariantNumeric: 'tabular-nums' }}>
+              <tr className="border-t border-dashed border-slate-300">
+                <th className="px-4 pt-3 pb-1 font-sans text-sm font-semibold">
+                  {query.data.rows.length} people
+                </th>
+                {(['scheduledHours', 'actualHours', 'overtimeHours'] as const).map((key) => (
+                  <td className="px-4 pt-3 pb-1 text-right" key={key}>
+                    {query.data.rows.reduce((sum, r) => sum + r[key], 0).toFixed(2)} h
+                  </td>
+                ))}
+                <td className="px-4 pt-3 pb-1 text-right">
+                  {query.data.rows.reduce((sum, r) => sum + r.lateCount, 0)}
+                </td>
+                <td className="px-4 pt-3 pb-1 text-right">
+                  <span className="tally-total inline-block font-semibold">
+                    {money(query.data.rows.reduce((sum, r) => sum + r.estimatedCost, 0))}
+                  </span>
+                </td>
+              </tr>
+              <tr>
+                <td colSpan={6} className="h-3" />
+              </tr>
+            </tfoot>
           </table>
         </div>
       )}

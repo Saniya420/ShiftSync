@@ -45,7 +45,7 @@ export function Modal({
   }, []);
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-0 sm:p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 p-0 sm:p-4"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -55,10 +55,10 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
-        className="h-dvh w-full max-w-xl overflow-y-auto sm:h-auto sm:max-h-[90vh] sm:rounded-2xl bg-white p-6 shadow-2xl sm:p-8"
+        className="h-dvh w-full max-w-xl overflow-y-auto sm:h-auto sm:max-h-[90vh] bg-white p-5 shadow-[0_24px_60px_-20px_rgba(27,29,33,0.45)] sm:rounded-[12px] sm:p-7"
       >
         <div className="mb-6 flex items-center justify-between">
-          <h2 id="modal-title" className="text-2xl">
+          <h2 id="modal-title" className="text-xl">
             {title}
           </h2>
           <button onClick={onClose} className="icon-btn" aria-label="Close dialog">
