@@ -55,7 +55,7 @@ export function TimesheetsPage() {
     <>
       <PageHeading
         title="Timesheets"
-        description="Scheduled and completed hours, weekly overtime, and estimated scheduled labor cost."
+        description="Scheduled and completed hours, weekly overtime, and estimated scheduled labour cost."
         action={
           <button
             className="btn-primary"
