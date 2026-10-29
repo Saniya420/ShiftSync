@@ -18,7 +18,7 @@ export function AvailabilityPage() {
   return (
     <>
       <PageHeading
-        title="When works for you?"
+        title="Availability"
         description="Set your recurring hours. Times use the local timezone of the location where you work."
       />
       <QueryState loading={query.isPending} error={query.isError} />

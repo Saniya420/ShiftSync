@@ -49,8 +49,8 @@ export function Team() {
   return (
     <>
       <PageHeading
-        title="People make it happen."
-        description="Your team, their hours, and the places you work together."
+        title="Team"
+        description="Who works here, where, their hourly rate and weekly hour limit."
         action={
           <button className="btn-primary" onClick={() => setMember('new')}>
             <Plus size={16} />
@@ -111,7 +111,9 @@ export function Team() {
               <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
                 <option value="">All roles</option>
                 {['OWNER', 'MANAGER', 'EMPLOYEE'].map((r) => (
-                  <option key={r}>{r}</option>
+                  <option key={r} value={r}>
+                    {r.charAt(0) + r.slice(1).toLowerCase()}
+                  </option>
                 ))}
               </select>
             </label>
