@@ -5,7 +5,7 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import { api, errorMessage } from '../api';
 import { useAuth } from '../auth';
-import { Empty, PageHeading, QueryState } from '../components';
+import { Empty, PageHeading, QueryState, Stamp, statusLabel } from '../components';
 import { Modal } from '../Modal';
 import type { Shift, Warning } from '../types';
 export interface TimeOff {
@@ -28,11 +28,14 @@ export interface Swap {
   shift: Shift;
 }
 export const dateLabel = (value: string, zone = 'UTC') =>
-  DateTime.fromISO(value).setZone(zone).toFormat('MMM d, yyyy HH:mm');
+  DateTime.fromISO(value).setZone(zone).toFormat('ccc dd LLL yyyy · HH:mm');
 const timeOffDates = (request: TimeOff, zone: string) =>
-  DateTime.fromISO(request.startsAt).setZone(zone).toFormat('MMM d, yyyy') +
+  DateTime.fromISO(request.startsAt).setZone(zone).toFormat('ccc dd LLL yyyy') +
   ' – ' +
-  DateTime.fromISO(request.endsAt).setZone(zone).minus({ milliseconds: 1 }).toFormat('MMM d, yyyy');
+  DateTime.fromISO(request.endsAt)
+    .setZone(zone)
+    .minus({ milliseconds: 1 })
+    .toFormat('ccc dd LLL yyyy');
 export function useRequestAction() {
   const cache = useQueryClient();
   return useMutation({
@@ -113,13 +116,15 @@ export function TimeOffPage() {
         {query.data
           ?.filter((r) => r.userId === user?.id)
           .map((r) => (
-            <article className="card" key={r.id}>
-              <p>{timeOffDates(r, zone)}</p>
-              <p className="my-3 text-sm text-slate-500">{r.reason}</p>
-              <span className="badge bg-slate-100">{r.status}</span>
+            <article className="card flex flex-wrap items-center gap-x-4 gap-y-3" key={r.id}>
+              <div className="min-w-0 flex-1">
+                <p className="num text-sm font-semibold text-ink">{timeOffDates(r, zone)}</p>
+                <p className="mt-1 text-sm text-slate-600">{r.reason}</p>
+              </div>
+              <Stamp status={r.status} />
               {['PENDING', 'APPROVED'].includes(r.status) && (
                 <button
-                  className="btn-secondary ml-3"
+                  className="btn-secondary py-2"
                   disabled={action.isPending}
                   onClick={() => action.mutate({ path: '/time-off/' + r.id + '/cancel' })}
                 >
@@ -142,7 +147,8 @@ export function RequestsPage() {
   const { user } = useAuth();
   const zone = user?.organization?.timezone ?? 'UTC';
   const [tab, setTab] = useState<'Time off' | 'Swaps'>('Time off');
-  const [statusFilter, setStatusFilter] = useState(''),
+  // ACTION is a client-side view: only what still needs a manager's decision.
+  const [statusFilter, setStatusFilter] = useState('ACTION'),
     [dateFrom, setDateFrom] = useState(''),
     [dateTo, setDateTo] = useState(''),
     [selected, setSelected] = useState<string[]>([]);
@@ -150,7 +156,7 @@ export function RequestsPage() {
     { id: string; ok: boolean; error?: { message: string } }[]
   >([]);
   const params = {
-    ...(statusFilter ? { status: statusFilter } : {}),
+    ...(statusFilter && statusFilter !== 'ACTION' ? { status: statusFilter } : {}),
     ...(dateFrom && dateTo ? { from: dateFrom, to: dateTo } : {}),
   };
   const cache = useQueryClient();
@@ -200,30 +206,35 @@ export function RequestsPage() {
         setReview({ id, warnings: err.response.data.error.details.warnings });
     }
   };
+  const timeOffShown =
+    statusFilter === 'ACTION' ? timeOff.data?.filter((r) => r.status === 'PENDING') : timeOff.data;
+  const swapsShown =
+    statusFilter === 'ACTION'
+      ? swaps.data?.filter((s) => ['PENDING', 'ACCEPTED'].includes(s.status))
+      : swaps.data;
   const loading = tab === 'Time off' ? timeOff.isPending : swaps.isPending;
   const error = tab === 'Time off' ? timeOff.isError : swaps.isError;
   return (
     <>
       <PageHeading
         title="Requests"
-        description={
-          'Review time away and shift handovers for your team. Time-off dates use ' + zone + '.'
-        }
+        description="Time off and shift swaps from your team. Decide the waiting ones first."
+        meta={'Dates use ' + zone}
       />
-      <div role="tablist" className="mb-6 flex gap-3">
+      <div role="tablist" className="mb-5 flex gap-2">
         {(['Time off', 'Swaps'] as const).map((v) => (
           <button
             key={v}
             role="tab"
             aria-selected={tab === v}
-            className={tab === v ? 'btn-primary' : 'btn-secondary'}
+            className={(tab === v ? 'btn-primary' : 'btn-secondary') + ' py-2'}
             onClick={() => setTab(v)}
           >
             {v}
           </button>
         ))}
       </div>
-      <div className="card mb-5 grid gap-3 sm:grid-cols-3">
+      <div className="mb-5 grid gap-3 sm:grid-cols-3">
         <label>
           Status
           <select
@@ -233,9 +244,12 @@ export function RequestsPage() {
               setSelected([]);
             }}
           >
+            <option value="ACTION">Needs a decision</option>
             <option value="">All statuses</option>
             {['PENDING', 'ACCEPTED', 'APPROVED', 'REJECTED', 'CANCELLED'].map((s) => (
-              <option key={s}>{s}</option>
+              <option key={s} value={s}>
+                {statusLabel(s)}
+              </option>
             ))}
           </select>
         </label>
@@ -266,42 +280,43 @@ export function RequestsPage() {
           Choose both dates to filter requests that overlap the range.
         </p>
       </div>
-      {tab === 'Time off' && (
-        <div className="mb-5 flex flex-wrap items-center gap-3">
-          <button
-            className="btn-secondary"
-            disabled={timeOff.isPending || !timeOff.data?.some((r) => r.status === 'PENDING')}
-            onClick={() =>
-              setSelected(
-                timeOff.data
-                  ?.filter((r) => r.status === 'PENDING')
-                  .slice(0, 100)
-                  .map((r) => r.id) ?? [],
-              )
-            }
-          >
-            Select pending shown
-          </button>
-          <span className="text-xs">{selected.length} selected</span>
-          <button
-            className="btn-primary"
-            disabled={!selected.length || batch.isPending}
-            onClick={() => batch.mutate('APPROVED')}
-          >
-            Approve selected
-          </button>
-          <button
-            className="btn-secondary"
-            disabled={!selected.length || batch.isPending}
-            onClick={() => {
-              if (window.confirm('Deny ' + selected.length + ' selected requests?'))
-                batch.mutate('REJECTED');
-            }}
-          >
-            Deny selected
-          </button>
-        </div>
-      )}
+      {tab === 'Time off' &&
+        (selected.length > 0 || timeOffShown?.some((r) => r.status === 'PENDING')) && (
+          <div className="mb-5 flex flex-wrap items-center gap-3">
+            <button
+              className="btn-secondary"
+              disabled={timeOff.isPending || !timeOffShown?.some((r) => r.status === 'PENDING')}
+              onClick={() =>
+                setSelected(
+                  timeOffShown
+                    ?.filter((r) => r.status === 'PENDING')
+                    .slice(0, 100)
+                    .map((r) => r.id) ?? [],
+                )
+              }
+            >
+              Select pending shown
+            </button>
+            <span className="num text-sm text-slate-600">{selected.length} selected</span>
+            <button
+              className="btn-primary"
+              disabled={!selected.length || batch.isPending}
+              onClick={() => batch.mutate('APPROVED')}
+            >
+              Approve selected
+            </button>
+            <button
+              className="btn-secondary"
+              disabled={!selected.length || batch.isPending}
+              onClick={() => {
+                if (window.confirm('Deny ' + selected.length + ' selected requests?'))
+                  batch.mutate('REJECTED');
+              }}
+            >
+              Deny selected
+            </button>
+          </div>
+        )}
       {batchResults.length > 0 && (
         <ul className="card mb-5 text-sm" aria-label="Batch results">
           {batchResults.map((r) => (
@@ -315,9 +330,9 @@ export function RequestsPage() {
       <QueryState loading={loading} error={error} />
       <div className="space-y-4">
         {tab === 'Time off'
-          ? timeOff.data?.map((r) => (
-              <article key={r.id} className="card">
-                <div className="flex items-center gap-3">
+          ? timeOffShown?.map((r) => (
+              <article key={r.id} className="card flex flex-wrap items-center gap-x-4 gap-y-3">
+                <div className="flex min-w-0 flex-1 items-start gap-3">
                   {r.status === 'PENDING' && (
                     <input
                       type="checkbox"
@@ -332,17 +347,20 @@ export function RequestsPage() {
                       }
                     />
                   )}
-                  <h2>{r.user.name}</h2>
+                  <div className="min-w-0">
+                    <h2 className="text-base">{r.user.name}</h2>
+                    <p className="num mt-0.5 text-sm text-ink">{timeOffDates(r, zone)}</p>
+                    <p className="mt-1 text-sm text-slate-600">{r.reason}</p>
+                  </div>
                 </div>
-                <p className="my-3">{timeOffDates(r, zone)}</p>
-                <p className="mb-3 text-sm text-slate-500">
-                  {r.reason} · {r.status}
-                </p>
+                <Stamp status={r.status} />
                 {r.status === 'PENDING' && (
-                  <div className="flex gap-3">
+                  <div className="flex gap-2">
                     {(['APPROVED', 'REJECTED'] as const).map((status) => (
                       <button
-                        className="btn-secondary"
+                        className={
+                          (status === 'APPROVED' ? 'btn-primary' : 'btn-secondary') + ' py-2'
+                        }
                         key={status}
                         disabled={action.isPending}
                         onClick={() =>
@@ -359,20 +377,27 @@ export function RequestsPage() {
                 )}
               </article>
             ))
-          : swaps.data?.map((s) => (
-              <article key={s.id} className="card">
-                <h2>
-                  {s.requester.name} → {s.acceptedBy?.name ?? s.target?.name ?? 'Open offer'}
-                </h2>
-                <p className="my-3">
-                  {dateLabel(s.shift.startsAt, s.shift.location?.timezone)} ·{' '}
-                  {s.shift.location?.name} · {s.status}
-                </p>
-                <div className="flex gap-3">
+          : swapsShown?.map((s) => (
+              <article key={s.id} className="card flex flex-wrap items-center gap-x-4 gap-y-3">
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-base">
+                    {s.requester.name} → {s.acceptedBy?.name ?? s.target?.name ?? 'Anyone'}
+                  </h2>
+                  <p className="num mt-0.5 text-sm text-ink">
+                    {dateLabel(s.shift.startsAt, s.shift.location?.timezone)}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {s.shift.position} · {s.shift.location?.name}
+                  </p>
+                </div>
+                <Stamp status={s.status}>
+                  {s.status === 'ACCEPTED' ? 'Ready to approve' : statusLabel(s.status)}
+                </Stamp>
+                <div className="flex gap-2">
                   {s.status === 'ACCEPTED' && (
                     <button
                       disabled={action.isPending}
-                      className="btn-primary"
+                      className="btn-primary py-2"
                       onClick={() => void approve(s.id)}
                     >
                       Approve
@@ -381,7 +406,7 @@ export function RequestsPage() {
                   {['PENDING', 'ACCEPTED'].includes(s.status) && (
                     <button
                       disabled={action.isPending}
-                      className="btn-secondary"
+                      className="btn-secondary py-2"
                       onClick={() => action.mutate({ path: '/swaps/' + s.id + '/reject' })}
                     >
                       Reject
@@ -393,8 +418,15 @@ export function RequestsPage() {
       </div>
       {!loading &&
         !error &&
-        (tab === 'Time off' ? timeOff.data?.length === 0 : swaps.data?.length === 0) && (
-          <Empty title="All clear" description="Team requests will appear here." />
+        (tab === 'Time off' ? timeOffShown?.length === 0 : swapsShown?.length === 0) && (
+          <Empty
+            title={statusFilter === 'ACTION' ? 'Nothing waiting on you' : 'No requests match'}
+            description={
+              statusFilter === 'ACTION'
+                ? 'New requests from your team show up here. Switch to All statuses to see past decisions.'
+                : 'Try another status or clear the dates.'
+            }
+          />
         )}
       {review && (
         <Modal title="Review swap conflicts" onClose={() => setReview(null)}>
@@ -474,6 +506,49 @@ export function OpenShiftsPage() {
     refetchInterval: 30000,
   });
   const action = useRequestAction();
+  // Offers for shifts that already started can no longer be picked up, so they drop out of view.
+  const live = (query.data ?? []).filter(
+    (s) => Date.parse(s.shift.startsAt) > Date.now() || !['PENDING', 'ACCEPTED'].includes(s.status),
+  );
+  const available = live.filter((s) => s.requesterId !== user?.id && s.status === 'PENDING');
+  const others = live.filter((s) => !available.includes(s));
+  const card = (s: Swap) => (
+    <article className="card flex flex-wrap items-center gap-x-4 gap-y-3" key={s.id}>
+      <div className="min-w-0 flex-1">
+        <h3 className="text-base text-ink">
+          {s.shift.position} · {s.requester.name}
+        </h3>
+        <p className="num mt-0.5 text-sm text-ink">
+          {dateLabel(s.shift.startsAt, s.shift.location?.timezone)}
+        </p>
+        <p className="mt-1 text-sm text-slate-600">
+          {s.shift.location?.name}
+          {s.acceptedBy && ' · Accepted by ' + s.acceptedBy.name}
+        </p>
+      </div>
+      <Stamp status={s.status}>
+        {s.status === 'ACCEPTED' ? 'Waiting for manager' : statusLabel(s.status)}
+      </Stamp>
+      {s.status === 'PENDING' && s.requesterId !== user?.id && (
+        <button
+          disabled={action.isPending}
+          className="btn-primary py-2"
+          onClick={() => action.mutate({ path: '/swaps/' + s.id + '/accept' })}
+        >
+          Accept shift
+        </button>
+      )}
+      {s.requesterId === user?.id && ['PENDING', 'ACCEPTED'].includes(s.status) && (
+        <button
+          disabled={action.isPending}
+          className="btn-secondary py-2"
+          onClick={() => action.mutate({ path: '/swaps/' + s.id + '/cancel' })}
+        >
+          Cancel offer
+        </button>
+      )}
+    </article>
+  );
   return (
     <>
       <PageHeading
@@ -481,42 +556,25 @@ export function OpenShiftsPage() {
         description="Pick up a coworker's shift, or follow your own offers. A manager confirms each handover."
       />
       <QueryState loading={query.isPending} error={query.isError} />
-      <div className="space-y-4">
-        {query.data?.map((s) => (
-          <article className="card" key={s.id}>
-            <h2>
-              {s.shift.position} · {s.requester.name}
-            </h2>
-            <p className="my-3">
-              {dateLabel(s.shift.startsAt, s.shift.location?.timezone)} · {s.shift.location?.name}
-            </p>
-            <p className="mb-4 text-sm text-slate-500">
-              {s.status}
-              {s.acceptedBy && ' · Accepted by ' + s.acceptedBy.name}
-            </p>
-            {s.status === 'PENDING' && s.requesterId !== user?.id && (
-              <button
-                disabled={action.isPending}
-                className="btn-primary"
-                onClick={() => action.mutate({ path: '/swaps/' + s.id + '/accept' })}
-              >
-                Accept shift
-              </button>
+      {query.data && (
+        <>
+          <h2 className="mb-3">Up for grabs</h2>
+          <div className="mb-8 space-y-3">
+            {available.length ? (
+              available.map(card)
+            ) : (
+              <p className="card text-sm text-slate-600">
+                No coworker is offering a shift right now.
+              </p>
             )}
-            {s.requesterId === user?.id && ['PENDING', 'ACCEPTED'].includes(s.status) && (
-              <button
-                disabled={action.isPending}
-                className="btn-secondary"
-                onClick={() => action.mutate({ path: '/swaps/' + s.id + '/cancel' })}
-              >
-                Cancel offer
-              </button>
-            )}
-          </article>
-        ))}
-      </div>
-      {query.data?.length === 0 && (
-        <Empty title="No offers yet" description="Available shift offers will appear here." />
+          </div>
+          {others.length > 0 && (
+            <>
+              <h2 className="mb-3">Your offers and history</h2>
+              <div className="space-y-3">{others.map(card)}</div>
+            </>
+          )}
+        </>
       )}
     </>
   );

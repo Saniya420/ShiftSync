@@ -48,7 +48,7 @@ function AvailabilityForm({ initial }: { initial: Availability[] }) {
     setWindows((w) => w.map((entry, i) => (i === index ? { ...entry, [field]: value } : entry)));
   return (
     <form onSubmit={save} className="max-w-4xl">
-      <div className="mb-6 rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-900">
+      <div className="mb-6 rounded-xl border border-stamp-100 bg-stamp-50 p-4 text-sm text-stamp-900">
         Choose the hours you can work each day. Add multiple windows for split availability. Leave a
         day empty when you’re unavailable.
       </div>
@@ -116,7 +116,7 @@ function AvailabilityForm({ initial }: { initial: Availability[] }) {
               )}
               <button
                 type="button"
-                className="inline-flex items-center gap-1 py-2 text-xs font-semibold text-emerald-700"
+                className="inline-flex items-center gap-1 py-2 text-xs font-semibold text-stamp-700"
                 onClick={() =>
                   setWindows((w) => [...w, { weekday, startMinute: 540, endMinute: 1020 }])
                 }

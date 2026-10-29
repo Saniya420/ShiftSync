@@ -1,23 +1,65 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,400..800&family=Azeret+Mono:wght@400..700&display=swap');
 @import 'tailwindcss';
 @config "../tailwind.config.ts";
 
+/* Till-roll world: thermal paper, thermal ink, the roll's red for trouble, stamp violet for confirmations. */
+@theme {
+  --font-sans: 'Archivo', system-ui, sans-serif;
+  --font-mono: 'Azeret Mono', ui-monospace, monospace;
+
+  --color-ink: #1b1d21;
+  --color-paper: #f3f4f5;
+
+  /* Neutral ink scale. 400 is the lightest text step and holds 4.5:1 on paper. */
+  --color-slate-50: #f7f8f9;
+  --color-slate-100: #eceef0;
+  --color-slate-200: #dcdfe3;
+  --color-slate-300: #c3c8ce;
+  --color-slate-400: #636a73;
+  --color-slate-500: #555c64;
+  --color-slate-600: #444a52;
+  --color-slate-700: #31363d;
+  --color-slate-800: #23272c;
+  --color-slate-900: #181b1f;
+
+  /* Rubber-stamp ink: published, approved, clocked in, primary focus. */
+  --color-stamp-50: #f3f2fb;
+  --color-stamp-100: #e6e4f7;
+  --color-stamp-200: #cfcbf0;
+  --color-stamp-300: #aaa3e3;
+  --color-stamp-400: #7f76d0;
+  --color-stamp-500: #5d53bd;
+  --color-stamp-600: #4a40a8;
+  --color-stamp-700: #3d348f;
+  --color-stamp-800: #332c74;
+  --color-stamp-900: #2a255c;
+  --color-stamp-950: #1b1740;
+}
+
 @layer base {
+  html {
+    scrollbar-color: var(--color-slate-300) transparent;
+  }
   body {
-    @apply m-0 bg-[#f6f7f4] text-slate-700 antialiased;
-    font-family: 'DM Sans', system-ui, sans-serif;
+    @apply m-0 bg-paper font-sans text-slate-700 antialiased;
+    caret-color: var(--color-stamp-600);
+  }
+  ::selection {
+    background: var(--color-stamp-200);
+    color: var(--color-ink);
   }
   h1,
   h2,
   h3 {
-    font-family: 'Manrope', system-ui, sans-serif;
     @apply text-ink;
+    font-stretch: 87.5%;
+    text-wrap: balance;
   }
   h1 {
-    @apply text-3xl font-bold tracking-tight sm:text-4xl;
+    @apply text-[1.75rem] leading-tight font-extrabold tracking-[-0.02em] sm:text-[2.125rem];
   }
   h2 {
-    @apply text-lg font-bold tracking-tight;
+    @apply text-lg font-bold tracking-[-0.01em];
   }
   h3 {
     @apply font-bold;
@@ -28,46 +70,80 @@
   input,
   select,
   textarea {
-    @apply mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100;
+    @apply mt-1.5 w-full rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-stamp-600 focus:ring-2 focus:ring-stamp-100;
   }
   input[type='checkbox'] {
-    @apply m-0 h-4 w-4 accent-emerald-700;
+    @apply m-0 h-4 w-4 accent-stamp-700;
   }
   button,
   a,
   input,
   select,
   textarea {
-    @apply focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600;
+    @apply focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stamp-600;
   }
   button:disabled {
     @apply cursor-not-allowed opacity-50;
   }
+  a {
+    text-underline-offset: 3px;
+  }
 }
+
 @layer components {
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-900;
+    @apply inline-flex items-center justify-center gap-2 rounded-md bg-ink px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-black;
   }
   .btn-secondary {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50;
+    @apply inline-flex items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-ink transition hover:border-slate-400 hover:bg-slate-50;
   }
   .icon-btn {
-    @apply rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-ink;
+    @apply rounded-md p-2 text-slate-500 transition hover:bg-slate-100 hover:text-ink;
   }
   .card {
-    @apply rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm shadow-slate-200/20;
-  }
-  .eyebrow {
-    @apply mb-3 text-[10px] font-bold tracking-[0.18em] text-emerald-700;
+    @apply rounded-[10px] border border-slate-200 bg-white p-6;
   }
   .badge {
-    @apply inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-semibold;
+    @apply inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-semibold;
   }
   .avatar {
-    @apply inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#e8eee9] text-xs font-bold text-emerald-900;
+    @apply inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-ink;
   }
   .screen-message {
     @apply flex min-h-screen items-center justify-center gap-4 p-8 text-sm text-slate-500;
+  }
+  /* Times, hours and money are printed figures. */
+  .num {
+    @apply font-mono;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+  /* Status stamps: state is always a word, never colour alone. */
+  .stamp {
+    @apply inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 font-mono text-[11px] font-semibold tracking-wide uppercase;
+  }
+  .stamp-ok {
+    @apply border-stamp-300 bg-stamp-50 text-stamp-800;
+  }
+  .stamp-warn {
+    @apply border-amber-300 bg-amber-50 text-amber-900;
+  }
+  .stamp-bad {
+    @apply border-red-300 bg-red-50 text-red-800;
+  }
+  .stamp-muted {
+    @apply border-slate-300 bg-white text-slate-600;
+  }
+  /* The signature tally: a torn perforation, printed figures, a double rule under the total. */
+  .tally {
+    @apply border-t border-dashed border-slate-300 pt-2 font-mono text-xs text-slate-600;
+    font-variant-numeric: tabular-nums;
+  }
+  .tally-total {
+    @apply border-b-[3px] border-double border-ink pb-1 font-semibold text-ink;
+  }
+  .draft-slip {
+    @apply border border-dashed border-slate-400 bg-white/60;
   }
 }
 
@@ -79,7 +155,7 @@
 }
 .roster-grid thead th:first-child {
   z-index: 20;
-  background: #f9faf8;
+  background: var(--color-slate-50);
 }
 @media (max-width: 639px) {
   .card {

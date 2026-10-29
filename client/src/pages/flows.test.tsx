@@ -128,6 +128,7 @@ describe('working client flows', () => {
     );
     await waitFor(() => expect(screen.getByRole('button', { name: 'Publish week' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Publish week' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish and notify' }));
     await waitFor(() =>
       expect(post).toHaveBeenCalledWith(
         '/shifts/publish',

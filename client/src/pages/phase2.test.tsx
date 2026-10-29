@@ -109,7 +109,15 @@ describe('phase 2 client workflows', () => {
     mockGet({
       '/swaps': {
         swaps: [
-          { ...swap, requesterId: 'e2', acceptedById: null, acceptedBy: null, status: 'PENDING' },
+          {
+            ...swap,
+            // Offers for shifts that already started are hidden, so this one is in the future.
+            shift: { ...shift, startsAt: '2099-10-23T09:00:00Z', endsAt: '2099-10-23T17:00:00Z' },
+            requesterId: 'e2',
+            acceptedById: null,
+            acceptedBy: null,
+            status: 'PENDING',
+          },
         ],
       },
     });
@@ -154,7 +162,7 @@ describe('phase 2 client workflows', () => {
     const post = vi.spyOn(api, 'post').mockResolvedValue({ data: {} });
     mount(<ClockCard />);
     await screen.findByRole('button', { name: 'Clock in' });
-    fireEvent.change(screen.getByLabelText('PIN (if set)'), { target: { value: '1234' } });
+    fireEvent.change(screen.getByLabelText('Clock-in PIN'), { target: { value: '1234' } });
     fireEvent.click(screen.getByRole('button', { name: 'Clock in' }));
     await waitFor(() =>
       expect(post).toHaveBeenCalledWith('/attendance/clock-in', {

@@ -68,6 +68,7 @@ describe('explicit overlap review', () => {
     );
     await waitFor(() => expect(screen.getByRole('button', { name: 'Publish week' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Publish week' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish and notify' }));
     const override = await screen.findByRole('button', { name: 'Publish with overlap' });
     expect(post).toHaveBeenCalledTimes(1);
     expect(post).toHaveBeenLastCalledWith(

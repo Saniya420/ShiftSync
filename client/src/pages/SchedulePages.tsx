@@ -2,20 +2,52 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { DateTime } from 'luxon';
-import { ArrowRight, CalendarDays, Clock3, Users, Wallet, Sun } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { api } from '../api';
 import { useAuth } from '../auth';
 import {
   currentWeek,
   Empty,
+  money,
   PageHeading,
   QueryState,
   scheduledHours,
+  Stamp,
   WeekPicker,
 } from '../components';
+import { usePendingWork } from '../pending';
 import type { Shift, User } from '../types';
 import { ClockCard } from './Attendance';
 import { SwapOffer } from './Requests';
+const timeRange = (s: Shift, zone: string) =>
+  DateTime.fromISO(s.startsAt)
+    .setZone(s.location?.timezone ?? zone)
+    .toFormat('HH:mm') +
+  '–' +
+  DateTime.fromISO(s.endsAt)
+    .setZone(s.location?.timezone ?? zone)
+    .toFormat('HH:mm');
+function ShiftLine({ shift, zone, who }: { shift: Shift; zone: string; who: string }) {
+  const start = DateTime.fromISO(shift.startsAt).setZone(shift.location?.timezone ?? zone);
+  return (
+    <li className="flex items-center gap-4 py-3">
+      <span className="num w-14 shrink-0 text-center leading-tight">
+        <span className="block text-xs text-slate-500">{start.toFormat('ccc')}</span>
+        <span className="block text-lg font-semibold text-ink">{start.toFormat('dd')}</span>
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-semibold text-ink">{who}</span>
+        <span className="block truncate text-sm text-slate-500">
+          <span className="num">{timeRange(shift, zone)}</span> · {shift.location?.name}
+        </span>
+      </span>
+      <Stamp status={shift.status} />
+    </li>
+  );
+}
+interface BoardShift {
+  liveStatus: string;
+}
 export function Dashboard() {
   const { user } = useAuth();
   const manager = user?.role !== 'EMPLOYEE';
@@ -31,7 +63,15 @@ export function Dashboard() {
     queryFn: async () => (await api.get<{ users: User[] }>('/users')).data.users,
     enabled: manager,
   });
+  const board = useQuery({
+    queryKey: ['attendance', 'board'],
+    queryFn: async () =>
+      (await api.get<{ shifts?: BoardShift[] }>('/attendance')).data.shifts ?? [],
+    enabled: manager,
+  });
+  const pending = usePendingWork(manager);
   const list = shifts.data ?? [];
+  const mine = list.filter((s) => s.userId === user?.id && s.status === 'PUBLISHED');
   const total = scheduledHours(list, week, zone);
   const cost = list.reduce(
     (sum, s) =>
@@ -40,152 +80,159 @@ export function Dashboard() {
         Number(team.data?.find((u) => u.id === s.userId)?.hourlyRate ?? 0),
     0,
   );
-  const upcoming = list.filter((s) => Date.parse(s.endsAt) > Date.now()).slice(0, 4);
-  const stats = [
-    {
-      label: manager ? 'Scheduled shifts' : 'Your shifts',
-      value: String(list.length),
-      icon: CalendarDays,
-      detail: 'This week',
-    },
-    {
-      label: 'Scheduled hours',
-      value: total.toFixed(1) + 'h',
-      icon: Clock3,
-      detail: 'A clear plan ahead',
-    },
-    ...(manager
-      ? [
-          {
-            label: 'Team members',
-            value: String(team.data?.length ?? 0),
-            icon: Users,
-            detail: 'People make it happen',
-          },
-          {
-            label: 'Estimated labor',
-            value: cost.toFixed(2),
-            icon: Wallet,
-            detail: 'Hours × hourly rate',
-          },
-        ]
-      : []),
+  const upcoming = (manager ? list : mine).filter((s) => Date.parse(s.endsAt) > Date.now());
+  const now = DateTime.now().setZone(zone);
+  const drafts = list.filter((s) => s.status === 'DRAFT').length;
+  const trouble = (board.data ?? []).filter((s) => ['LATE', 'NO_SHOW'].includes(s.liveStatus));
+  const queue = [
+    { count: pending.timeOff.length, label: 'time-off requests to decide', to: '/app/requests' },
+    { count: pending.swaps.length, label: 'swaps ready to approve', to: '/app/requests' },
+    { count: drafts, label: 'draft shifts not yet published', to: '/app/roster' },
+    { count: trouble.length, label: 'late or missing today', to: '/app/attendance', bad: true },
   ];
+  const waiting = queue.filter((q) => q.count > 0);
   return (
     <>
       <PageHeading
-        eyebrow="A LITTLE CLARITY FOR YOUR DAY"
-        title={'Hello, ' + user?.name.split(' ')[0] + '.'}
-        description="Here’s how your week is shaping up."
+        title={manager ? 'Today at ' + (user?.organization?.name ?? 'your shop') : 'Today'}
+        description={
+          manager
+            ? 'What needs a decision, then how this week adds up.'
+            : 'Your next shift and the rest of your week.'
+        }
+        meta={now.toFormat('cccc dd LLL yyyy · HH:mm') + ' · ' + zone}
         action={
-          <Link className="btn-primary" to={manager ? '/app/roster' : '/app/schedule'}>
-            {manager ? 'Open roster' : 'My schedule'}
-            <ArrowRight size={16} />
-          </Link>
+          manager ? (
+            <Link className="btn-primary" to="/app/roster">
+              Open roster
+              <ArrowRight size={16} />
+            </Link>
+          ) : undefined
         }
       />
-      {!manager && <ClockCard />}
-      <div className="mb-7 flex items-center gap-4 rounded-2xl border border-[#d8e8d8] bg-[#eaf1e7] px-6 py-5">
-        <Sun size={30} className="shrink-0 text-emerald-700" />
-        <div>
-          <h2 className="text-base">A good week starts with everyone in sync.</h2>
-          <p className="mt-1 text-sm text-emerald-900/60">
-            {manager
-              ? 'Plan your shifts, spot conflicts early, and give your team a clear view.'
-              : 'Your published shifts and availability, all in one place.'}
-          </p>
-        </div>
-      </div>
+      {!manager && <ClockCard next={upcoming[0]} />}
       <QueryState
         loading={shifts.isPending || (manager && team.isPending)}
         error={shifts.isError || team.isError}
       />
-      {!shifts.isPending && !shifts.isError && (
-        <>
-          <div className={'mb-9 grid gap-4 sm:grid-cols-2 ' + (manager ? 'xl:grid-cols-4' : '')}>
-            {stats.map(({ label, value, icon: Icon, detail }) => (
-              <div className="card" key={label}>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium text-slate-500">{label}</span>
-                  <Icon size={18} className="text-emerald-700" />
-                </div>
-                <p className="mt-5 text-3xl font-bold tracking-tight text-ink">{value}</p>
-                <p className="mt-2 text-xs text-slate-400">{detail}</p>
-              </div>
-            ))}
-          </div>
-          <div className="grid gap-6 xl:grid-cols-[1.5fr_1fr]">
-            <section className="card">
-              <div className="mb-5 flex items-center justify-between">
-                <h2>Coming up next</h2>
-                <span className="text-xs text-slate-400">This week</span>
-              </div>
-              {upcoming.length ? (
-                upcoming.map((s) => (
-                  <div
-                    className="flex items-center gap-4 border-t border-slate-100 py-4"
-                    key={s.id}
+      {manager && (
+        <section aria-labelledby="needs-you" className="mb-8">
+          <h2 id="needs-you" className="mb-3">
+            Needs you
+          </h2>
+          {waiting.length ? (
+            <ul className="grid gap-px overflow-hidden rounded-[10px] border border-slate-200 bg-slate-200 sm:grid-cols-2 xl:grid-cols-4">
+              {waiting.map((q) => (
+                <li key={q.label} className="bg-white">
+                  <Link
+                    to={q.to}
+                    className="group flex h-full items-center gap-4 px-5 py-4 hover:bg-slate-50"
                   >
-                    <div className="w-12 shrink-0 rounded-xl bg-slate-50 py-2 text-center">
-                      <p className="text-[10px] uppercase text-slate-400">
-                        {DateTime.fromISO(s.startsAt)
-                          .setZone(s.location?.timezone ?? zone)
-                          .toFormat('ccc')}
-                      </p>
-                      <p className="text-xl font-bold text-ink">
-                        {DateTime.fromISO(s.startsAt).setZone(s.location?.timezone ?? zone).day}
-                      </p>
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-ink">
-                        {manager
-                          ? (team.data?.find((u) => u.id === s.userId)?.name ?? 'Open shift')
-                          : s.position}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-400">
-                        {DateTime.fromISO(s.startsAt)
-                          .setZone(s.location?.timezone ?? zone)
-                          .toFormat('HH:mm')}{' '}
-                        –{' '}
-                        {DateTime.fromISO(s.endsAt)
-                          .setZone(s.location?.timezone ?? zone)
-                          .toFormat('HH:mm')}{' '}
-                        · {s.location?.name}
-                      </p>
-                    </div>
                     <span
                       className={
-                        'badge ' +
-                        (s.status === 'PUBLISHED'
-                          ? 'bg-emerald-50 text-emerald-700'
-                          : 'bg-amber-50 text-amber-700')
+                        'num text-3xl font-semibold ' + (q.bad ? 'text-red-700' : 'text-ink')
                       }
                     >
-                      {s.status === 'PUBLISHED' ? 'Published' : 'Draft'}
+                      {q.count}
                     </span>
-                  </div>
-                ))
-              ) : (
-                <p className="py-12 text-center text-sm text-slate-400">
-                  No more shifts this week. A little breathing room.
-                </p>
-              )}
-            </section>
-            <section className="card bg-[#f0eee5]">
-              <p className="eyebrow">MAKE YOURSELF AVAILABLE</p>
-              <h2 className="max-w-56 text-2xl leading-snug">
-                Good schedules start with good communication.
-              </h2>
-              <p className="mt-4 text-sm leading-relaxed text-slate-500">
-                Keep your available hours up to date so your team knows when you’re ready to work.
-              </p>
-              <Link to="/app/availability" className="btn-secondary mt-7">
-                Update availability
-                <ArrowRight size={16} />
+                    <span className="flex-1 text-sm text-slate-600">{q.label}</span>
+                    <ArrowRight
+                      size={16}
+                      className="text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-ink"
+                      aria-hidden="true"
+                    />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="card flex items-center gap-3 py-4 text-sm text-slate-600">
+              <Stamp status="APPROVED">All clear</Stamp>
+              {pending.loading ? 'Checking requests…' : 'Nothing is waiting on you right now.'}
+            </p>
+          )}
+        </section>
+      )}
+      {!shifts.isPending && !shifts.isError && (
+        <div className={'grid gap-6 ' + (manager ? 'xl:grid-cols-[1.4fr_1fr]' : '')}>
+          <section className="card">
+            <div className="mb-1 flex items-baseline justify-between gap-3">
+              <h2>{manager ? 'Coming up this week' : 'Your week'}</h2>
+              <Link
+                to={manager ? '/app/roster' : '/app/schedule'}
+                className="text-sm font-semibold text-ink underline"
+              >
+                {manager ? 'Full roster' : 'Full schedule'}
               </Link>
+            </div>
+            {upcoming.length ? (
+              <ul className="divide-y divide-slate-100">
+                {upcoming.slice(0, manager ? 6 : 7).map((s) => (
+                  <ShiftLine
+                    key={s.id}
+                    shift={s}
+                    zone={zone}
+                    who={
+                      manager
+                        ? (team.data?.find((u) => u.id === s.userId)?.name ?? 'Open shift')
+                        : s.position
+                    }
+                  />
+                ))}
+              </ul>
+            ) : manager ? (
+              <Empty
+                inset
+                title="Nothing left on this week’s roster"
+                description="Either the week is done or it hasn’t been built yet. Check the roster before your team asks."
+                action={
+                  <Link to="/app/roster" className="btn-primary">
+                    Build the roster
+                  </Link>
+                }
+              />
+            ) : (
+              <p className="py-10 text-center text-sm text-slate-500">
+                No more published shifts this week. Check{' '}
+                <Link to="/app/schedule" className="font-semibold text-ink underline">
+                  next week
+                </Link>{' '}
+                or pick up an{' '}
+                <Link to="/app/open-shifts" className="font-semibold text-ink underline">
+                  open shift
+                </Link>
+                .
+              </p>
+            )}
+          </section>
+          {manager && (
+            <section className="card self-start">
+              <h2>This week adds up to</h2>
+              <p className="num mt-1 text-xs text-slate-500">
+                {DateTime.fromISO(week).toFormat('dd LLL')} –{' '}
+                {DateTime.fromISO(week).plus({ days: 6 }).toFormat('dd LLL yyyy')}
+              </p>
+              <dl className="mt-4 space-y-2 text-sm">
+                {[
+                  ['Shifts', String(list.length)],
+                  ['Scheduled hours', total.toFixed(1) + ' h'],
+                  ['People on the roster', String(new Set(list.map((s) => s.userId)).size)],
+                  ['Drafts not published', String(drafts)],
+                ].map(([label, value]) => (
+                  <div key={label} className="flex items-baseline justify-between gap-4">
+                    <dt className="text-slate-600">{label}</dt>
+                    <dd className="num text-ink">{value}</dd>
+                  </div>
+                ))}
+              </dl>
+              <div className="tally tally-total mt-4 flex items-baseline justify-between text-sm">
+                <span className="font-sans font-semibold">Estimated labour</span>
+                <span>{money(cost)}</span>
+              </div>
+              <p className="mt-2 text-xs text-slate-500">Hours × each person’s hourly rate.</p>
             </section>
-          </div>
-        </>
+          )}
+        </div>
       )}
     </>
   );
@@ -202,56 +249,70 @@ export function MySchedule() {
   const shifts = (query.data ?? []).filter(
     (s) => s.userId === user?.id && s.status === 'PUBLISHED',
   );
+  const hours = scheduledHours(shifts, week, user?.organization?.timezone);
   return (
     <>
       <PageHeading
         title="My schedule"
-        description="Your published shifts. A clear view of the week ahead."
+        description="Your published shifts. Offer one to a coworker if you can’t make it."
         action={<WeekPicker week={week} onChange={setWeek} />}
       />
       <QueryState loading={query.isPending} error={query.isError} />
       {!query.isPending &&
         !query.isError &&
         (shifts.length ? (
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {shifts.map((s) => (
-              <article key={s.id} className="card border-t-4 border-t-emerald-600">
-                <p className="eyebrow">
-                  {DateTime.fromISO(s.startsAt)
-                    .setZone(s.location?.timezone ?? 'UTC')
-                    .toFormat('cccc, MMM d')}
-                </p>
-                <h2>{s.position}</h2>
-                <p className="mt-4 text-2xl font-semibold text-ink">
-                  {DateTime.fromISO(s.startsAt)
-                    .setZone(s.location?.timezone ?? 'UTC')
-                    .toFormat('HH:mm')}{' '}
-                  –{' '}
-                  {DateTime.fromISO(s.endsAt)
-                    .setZone(s.location?.timezone ?? 'UTC')
-                    .toFormat('HH:mm')}
-                </p>
-                <p className="mt-2 text-sm text-slate-500">
-                  {s.location?.name} · {s.location?.timezone}
-                </p>
-                {s.notes && (
-                  <p className="mt-4 rounded-lg bg-slate-50 p-3 text-sm text-slate-500">
-                    {s.notes}
-                  </p>
-                )}
-                <span className="badge mt-5 bg-emerald-50 text-emerald-700">Published</span>
-                {Date.parse(s.startsAt) > Date.now() && (
-                  <button className="btn-secondary ml-3" onClick={() => setOffered(s)}>
-                    Swap
-                  </button>
-                )}
-              </article>
-            ))}
-          </div>
+          <section className="card max-w-3xl p-0 sm:p-0">
+            <ul className="divide-y divide-slate-100">
+              {shifts.map((s) => {
+                const zone = s.location?.timezone ?? 'UTC';
+                const start = DateTime.fromISO(s.startsAt).setZone(zone);
+                return (
+                  <li
+                    key={s.id}
+                    className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-4 sm:px-6"
+                  >
+                    <span className="num w-20 shrink-0 leading-tight">
+                      <span className="block text-xs text-slate-500">{start.toFormat('cccc')}</span>
+                      <span className="block font-semibold text-ink">
+                        {start.toFormat('dd LLL')}
+                      </span>
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="num block text-lg font-semibold text-ink">
+                        {timeRange(s, zone)}
+                      </span>
+                      <span className="block text-sm text-slate-500">
+                        {s.position} · {s.location?.name}
+                      </span>
+                      {s.notes && (
+                        <span className="mt-1 block text-sm text-slate-600">{s.notes}</span>
+                      )}
+                    </span>
+                    {Date.parse(s.startsAt) > Date.now() && (
+                      <button className="btn-secondary" onClick={() => setOffered(s)}>
+                        Swap
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="tally tally-total mx-4 mb-4 flex justify-between sm:mx-6">
+              <span className="font-sans font-semibold">
+                {shifts.length} {shifts.length === 1 ? 'shift' : 'shifts'}
+              </span>
+              <span>{hours.toFixed(1)} h</span>
+            </div>
+          </section>
         ) : (
           <Empty
-            title="Your week is still taking shape"
-            description="Published shifts will appear here as soon as your manager shares the roster."
+            title="No published shifts this week"
+            description="Your manager hasn’t published shifts for you yet. Try the next week, or pick up an open shift."
+            action={
+              <Link to="/app/open-shifts" className="btn-secondary">
+                See open shifts
+              </Link>
+            }
           />
         ))}
       {offered && <SwapOffer shift={offered} close={() => setOffered(null)} />}

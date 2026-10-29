@@ -163,7 +163,7 @@ it('filters the requests inbox and displays individual batch failures', async ()
     data: { results: [{ id: 't1', ok: false, error: { message: 'Already resolved.' } }] },
   });
   mount(<RequestsPage />);
-  await screen.findByText(/Family.*PENDING/);
+  await screen.findByText('Family');
   fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'PENDING' } });
   fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-10-19' } });
   fireEvent.change(screen.getByLabelText('Through'), { target: { value: '2026-10-25' } });

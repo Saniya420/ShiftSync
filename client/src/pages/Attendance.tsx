@@ -3,9 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DateTime } from 'luxon';
 import toast from 'react-hot-toast';
 import { api, errorMessage } from '../api';
-import { Empty, PageHeading, QueryState } from '../components';
+import { Empty, PageHeading, QueryState, Stamp } from '../components';
 import { Modal } from '../Modal';
-import { dateLabel } from './Requests';
 import type { Shift } from '../types';
 interface Record {
   id: string;
@@ -32,7 +31,17 @@ function coordinates(): Promise<{ lat?: number; lng?: number }> {
     );
   });
 }
-export function ClockCard() {
+const clock = (value: string, zone = 'UTC') =>
+  DateTime.fromISO(value).setZone(zone).toFormat('HH:mm');
+function until(value: string) {
+  const diff = DateTime.fromISO(value).diffNow(['days', 'hours', 'minutes']);
+  if (diff.as('minutes') <= 0) return 'now';
+  if (diff.days >= 1) return 'in ' + Math.round(diff.as('days')) + ' days';
+  if (diff.hours >= 1) return 'in ' + diff.hours + ' h ' + Math.floor(diff.minutes) + ' min';
+  return 'in ' + Math.ceil(diff.minutes) + ' min';
+}
+/** The employee's next shift as a slip, with the clock button in thumb reach once it is open. */
+export function ClockCard({ next }: { next?: Shift }) {
   const cache = useQueryClient();
   const [pin, setPin] = useState('');
   const query = useQuery({
@@ -57,48 +66,100 @@ export function ClockCard() {
     },
     onError: (err) => toast.error(errorMessage(err)),
   });
+  const shift = query.data?.shift ?? next ?? null;
+  const zone = shift?.location?.timezone ?? 'UTC';
+  const record = query.data?.record;
+  const open = Boolean(query.data?.shift);
   return (
-    <section className="card mb-7">
-      <h2>Your clock</h2>
+    <section
+      aria-labelledby="clock-title"
+      className="mb-8 overflow-hidden rounded-[10px] border border-slate-300 bg-white"
+    >
+      <div className="flex items-baseline justify-between gap-3 border-b border-dashed border-slate-300 px-5 py-3">
+        <h2 id="clock-title" className="text-base">
+          {open ? 'Your shift' : 'Next shift'}
+        </h2>
+        {shift && (
+          <span className="num text-xs text-slate-500">{open ? zone : until(shift.startsAt)}</span>
+        )}
+      </div>
       <QueryState loading={query.isPending} error={query.isError} />
-      {query.data?.shift ? (
-        <>
-          <p className="my-3 text-sm">
-            {query.data.shift.position} · {query.data.shift.location?.name} ·{' '}
-            {dateLabel(query.data.shift.startsAt, query.data.shift.location?.timezone)}
+      {shift ? (
+        <div className="px-5 pt-4 pb-5">
+          <p className="text-sm text-slate-600">
+            {DateTime.fromISO(shift.startsAt).setZone(zone).toFormat('cccc dd LLL')}
           </p>
-          <label className="mb-4 max-w-xs">
-            PIN (if set)
-            <input
-              type="password"
-              inputMode="numeric"
-              autoComplete="off"
-              value={pin}
-              onChange={(e) => setPin(e.target.value)}
-            />
-          </label>
-          <button
-            className="btn-primary w-full py-5 text-xl sm:w-auto sm:px-16"
-            disabled={action.isPending}
-            onClick={() => action.mutate()}
-          >
-            {action.isPending
-              ? 'Saving attendance…'
-              : query.data.record?.clockInAt
-                ? 'Clock out'
-                : 'Clock in'}
-          </button>
-        </>
+          <p className="num mt-1 text-[2.5rem] leading-none font-semibold tracking-[-0.03em] text-ink sm:text-5xl">
+            {clock(shift.startsAt, zone)}–{clock(shift.endsAt, zone)}
+          </p>
+          <p className="mt-2 text-sm text-slate-600">
+            {shift.position} · {shift.location?.name}
+          </p>
+          {record?.clockInAt && (
+            <p className="mt-4 flex flex-wrap items-center gap-2 text-sm text-slate-700">
+              <Stamp status={record.clockOutAt ? 'OUT' : 'IN'}>
+                {record.clockOutAt ? 'Out' : 'In'}{' '}
+                {clock(record.clockOutAt ?? record.clockInAt, zone)}
+              </Stamp>
+              {record.status && <Stamp status={record.status} />}
+            </p>
+          )}
+          {open && !record?.clockOutAt ? (
+            <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-end">
+              <label className="sm:max-w-44">
+                Clock-in PIN
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  aria-describedby="pin-hint"
+                  value={pin}
+                  onChange={(e) => setPin(e.target.value)}
+                />
+              </label>
+              <button
+                className="btn-primary w-full py-4 text-lg sm:w-auto sm:px-14"
+                disabled={action.isPending}
+                onClick={() => action.mutate()}
+              >
+                {action.isPending
+                  ? 'Saving attendance…'
+                  : record?.clockInAt
+                    ? 'Clock out'
+                    : 'Clock in'}
+              </button>
+            </div>
+          ) : (
+            !open && (
+              <p className="mt-4 text-sm text-slate-500">
+                The clock-in button opens 15 minutes before{' '}
+                <span className="num">{clock(shift.startsAt, zone)}</span>.
+              </p>
+            )
+          )}
+          {open && !record?.clockOutAt && (
+            <p id="pin-hint" className="mt-2 text-xs text-slate-500">
+              Leave the PIN blank if your manager hasn’t given you one.
+            </p>
+          )}
+        </div>
       ) : (
         query.data && (
-          <p className="mt-3 text-sm text-slate-500">
-            No shift ready to clock in. Your button appears 15 minutes before start.
+          <p className="px-5 py-5 text-sm text-slate-500">
+            No published shifts coming up this week.
           </p>
         )
       )}
     </section>
   );
 }
+const boardOrder: { [status: string]: number } = {
+  NO_SHOW: 0,
+  LATE: 1,
+  NOT_ARRIVED: 2,
+  IN: 3,
+  OUT: 4,
+};
 export function AttendancePage() {
   const query = useQuery({
     queryKey: ['attendance', 'board'],
@@ -107,56 +168,82 @@ export function AttendancePage() {
     refetchInterval: 15000,
   });
   const [edit, setEdit] = useState<BoardShift | null>(null);
+  const shifts = [...(query.data?.shifts ?? [])].sort(
+    (a, b) => (boardOrder[a.liveStatus] ?? 9) - (boardOrder[b.liveStatus] ?? 9),
+  );
   return (
     <>
       <PageHeading
         title="Attendance today"
-        description={
-          'Live arrivals, clock-outs, and missed shifts. Refreshes every 15 seconds. ' +
-          (query.data?.timezone ?? '')
+        description="Late and missing people first. Refreshes every 15 seconds."
+        meta={
+          query.data &&
+          'Updated ' +
+            DateTime.fromMillis(query.dataUpdatedAt)
+              .setZone(query.data.timezone)
+              .toFormat('HH:mm:ss') +
+            ' · ' +
+            query.data.timezone
         }
       />
       <QueryState loading={query.isPending} error={query.isError} />
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {query.data?.shifts.map((s) => (
-          <article className="card" key={s.id}>
-            <h2>{s.user.name}</h2>
-            <p className="my-3 text-sm">
-              {s.location?.name} · {dateLabel(s.startsAt, s.location?.timezone)}
-            </p>
-            <span
-              className={
-                'badge ' +
-                (s.liveStatus === 'IN'
-                  ? 'bg-emerald-50 text-emerald-700'
-                  : 'bg-amber-50 text-amber-800')
-              }
-            >
-              {s.liveStatus.replaceAll('_', ' ')}
-            </span>
-            <p className="my-3 text-sm">{s.attendance[0]?.status.replaceAll('_', ' ')}</p>
-            {s.attendance[0]?.clockInAt && (
-              <p className="text-xs">
-                In: {dateLabel(s.attendance[0].clockInAt, s.location?.timezone)}
-              </p>
-            )}
-            {s.attendance[0]?.clockOutAt && (
-              <p className="text-xs">
-                Out: {dateLabel(s.attendance[0].clockOutAt, s.location?.timezone)}
-              </p>
-            )}
-            {s.attendance[0] && (
-              <button className="btn-secondary mt-4" onClick={() => setEdit(s)}>
-                Correct record
-              </button>
-            )}
-          </article>
-        ))}
-      </div>
+      {shifts.length > 0 && (
+        <div className="card overflow-x-auto p-0 sm:p-0">
+          <table className="w-full min-w-[640px] text-left text-sm">
+            <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-600">
+              <tr>
+                <th className="px-5 py-3 font-medium">Person</th>
+                <th className="px-3 py-3 font-medium">Shift</th>
+                <th className="px-3 py-3 font-medium">Now</th>
+                <th className="px-3 py-3 font-medium">In</th>
+                <th className="px-3 py-3 font-medium">Out</th>
+                <th className="px-5 py-3">
+                  <span className="sr-only">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {shifts.map((s) => {
+                const zone = s.location?.timezone ?? query.data?.timezone ?? 'UTC';
+                const record = s.attendance[0];
+                return (
+                  <tr key={s.id}>
+                    <td className="px-5 py-3">
+                      <span className="block font-semibold text-ink">{s.user.name}</span>
+                      <span className="block text-xs text-slate-500">
+                        {s.position} · {s.location?.name}
+                      </span>
+                    </td>
+                    <td className="num px-3 py-3 text-ink">
+                      {clock(s.startsAt, zone)}–{clock(s.endsAt, zone)}
+                    </td>
+                    <td className="px-3 py-3">
+                      <Stamp status={s.liveStatus} />
+                    </td>
+                    <td className="num px-3 py-3">
+                      {record?.clockInAt ? clock(record.clockInAt, zone) : '—'}
+                    </td>
+                    <td className="num px-3 py-3">
+                      {record?.clockOutAt ? clock(record.clockOutAt, zone) : '—'}
+                    </td>
+                    <td className="px-5 py-3 text-right">
+                      {record && (
+                        <button className="btn-secondary px-3 py-1.5" onClick={() => setEdit(s)}>
+                          Correct record
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
       {query.data?.shifts.length === 0 && (
         <Empty
           title="No shifts today"
-          description="Published shifts and attendance will appear here."
+          description="Nobody is rostered today, or today’s shifts aren’t published yet."
         />
       )}
       {edit && <Correction shift={edit} close={() => setEdit(null)} />}
